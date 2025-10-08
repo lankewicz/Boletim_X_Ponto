@@ -1,0 +1,14 @@
+--- a/utils/relatorios.py
++++ b/utils/relatorios.py
+@@
+-# (remova qualquer linha que importe o próprio módulo)
+-# from utils.relatorios import carregar_boletim_parquet, ...
++# NUNCA importe utils.relatorios dentro deste arquivo — causa circular import.
+@@
++__all__ = [
++    "ARQUIVO_PADRAO",
++    "carregar_boletim_parquet",
++    "totalizar_por_funcionario",
++    "relatorio_sa_por_registro",
++    "gerar_relatorio_console",
++]

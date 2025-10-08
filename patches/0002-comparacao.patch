@@ -1,0 +1,18 @@
+--- a/utils/comparacao.py
++++ b/utils/comparacao.py
+@@
+-            df_m[f"{h}_B"] = pd.to_numeric(df_m[f"{h}_B"], errors="coerce")
+-            df_m[f"{h}_P"] = pd.to_numeric(df_m[f"{h}_P"], errors="coerce")
+-            df_m[h] = df_m[f"{h}_B"].fillna(0) - df_m[f"{h}_P"].fillna(0)
++            df_m[f"{h}_B"] = pd.to_numeric(df_m[f"{h}_B"], errors="coerce").fillna(0.0)
++            df_m[f"{h}_P"] = pd.to_numeric(df_m[f"{h}_P"], errors="coerce").fillna(0.0)
++            s = (df_m[f"{h}_B"] - df_m[f"{h}_P"]).round(2)
++            df_m[h] = s.where(s.abs() >= 5e-4, 0.0)
+@@
+-    for _h in HEADERS_VIZ:
+-        if _h in df_d.columns:
+-            df_d[_h] = pd.to_numeric(df_d[_h], errors="coerce").round(2)
++    for _h in HEADERS_VIZ:
++        if _h in df_d.columns:
++            s = pd.to_numeric(df_d[_h], errors="coerce").round(2)
++            df_d[_h] = s.where(s.abs() >= 5e-4, 0.0)

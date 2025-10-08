@@ -1,0 +1,52 @@
+--- a/utils/formatadores.py
++++ b/utils/formatadores.py
+@@
+ def somar_preservando_formato(series, *, default_decimal=True):
+-    vals = [v for v in series if str(v).strip() not in ("", "-", "None", "nan")]
+-    if not vals:
+-        return "0:00" if not default_decimal else "0,00"
+-    hhmm_count = sum(1 for v in vals if _eh_hhmm(v))
+-    if hhmm_count >= max(1, len(vals)//2):
+-        total_min = 0
+-        for v in vals:
+-            if _eh_hhmm(v):
+-                total_min += _hhmm_para_minutos(str(v))
+-            else:
+-                total_min += int(round(hhmm_para_decimal(v) * 60))
+-        return _minutos_para_hhmm(total_min)
+-    parsed = []
+-    for v in vals:
+-        try:
+-            s = str(v).strip()
+-            parsed.append(
+-                float(s.replace(".", "").replace(",", ".", 1)) if s.count(",")==1 and s.count(".")>1
+-                else float(s.replace(",", ".", 1))
+-            )
+-        except Exception:
+-            return ""
+-    soma = _clamp_small_zero(sum(parsed))
+-    return f"{soma:.2f}".replace(".", ",")
++    vals = [v for v in series if str(v).strip() not in ("", "-", "None", "nan")]
++    if not vals:
++        return "0:00" if not default_decimal else "0,00"
++    hhmm_count = sum(1 for v in vals if _eh_hhmm(v))
++    if hhmm_count >= max(1, len(vals)//2):
++        total_min = 0
++        for v in vals:
++            if _eh_hhmm(v):
++                total_min += _hhmm_para_minutos(str(v))
++            else:
++                total_min += int(round(hhmm_para_decimal(v) * 60))
++        return _minutos_para_hhmm(total_min)
++    parsed = []
++    for v in vals:
++        try:
++            s = str(v).strip()
++            if s.count(",")==1 and s.count(".")>1:
++                parsed.append(float(s.replace(".", "").replace(",", ".", 1)))
++            else:
++                parsed.append(float(s.replace(",", ".", 1)))
++        except Exception:
++            parsed.append(hhmm_para_decimal(v))
++    soma = _clamp_small_zero(sum(parsed))
++    return f"{soma:.2f}".replace(".", ",")
