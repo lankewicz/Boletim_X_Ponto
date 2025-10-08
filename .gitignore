@@ -1,0 +1,8 @@
+﻿__pycache__/
+*.pyc
+*.parquet
+*_VERIFICACAO.txt
+.venv/
+.env
+.deps_state.json
+.bkp/
