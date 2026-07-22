@@ -448,46 +448,77 @@ class RelatorioHorasApp:
 
     def executar_extrator_boletim(self, forcar_dialogo=False):
         """Abre pasta com PDFs de boletim, processa e recarrega parquet consolidado."""
+        pasta = self.pasta_pdfs
+        if forcar_dialogo or not pasta or not os.path.exists(pasta):
+            pasta = filedialog.askdirectory(
+                title="Selecione a pasta com os relatórios PDF de BOLETIM"
+            )
+            if not pasta:
+                return
+            salvar_ultima_pasta(self.arquivo_ultima_pasta, pasta)
+        self.pasta_pdfs = pasta
 
         def worker(set_total, set_arquivo):
-            pasta = self.pasta_pdfs
-            if forcar_dialogo or not pasta:
-                pasta = filedialog.askdirectory(
-                    title="Selecione a pasta com os relatórios PDF de BOLETIM"
-                )
-                if not pasta:
-                    return
-                salvar_ultima_pasta(self.arquivo_ultima_pasta, pasta)
-            self.pasta_pdfs = pasta
-            caminho_parquet_boletim = consolidar_pdfs_em_excel(pasta, set_total, set_arquivo)
-            self.dados_df, self.data_minima, self.data_maxima = self.carregar_dados_boletim(
-                caminho_parquet_boletim
-            )
-            if self.dados_df is not None:
-                self.atualizar_interface_filtros()
-                if self.status_bar:
-                    self.status_bar.config(text="Dados de boletim atualizados com sucesso.")
+            return consolidar_pdfs_em_excel(pasta, set_total, set_arquivo)
 
-        mostrar_modal_progresso(self.janela, "Processando relatórios de Boletim...", worker)
+        def ao_concluir(caminho_parquet_boletim, erro):
+            if erro:
+                messagebox.showerror(
+                    "Erro ao Processar Boletins",
+                    f"Ocorreu um erro no processamento dos PDFs:\n{erro}",
+                )
+                if self.status_bar:
+                    self.status_bar.config(text=f"Erro ao processar boletins: {erro}")
+                return
+
+            if caminho_parquet_boletim:
+                self.dados_df, self.data_minima, self.data_maxima = self.carregar_dados_boletim(
+                    caminho_parquet_boletim
+                )
+                if self.dados_df is not None:
+                    self.atualizar_interface_filtros()
+                    if self.status_bar:
+                        self.status_bar.config(text="Dados de boletim atualizados com sucesso.")
+
+        mostrar_modal_progresso(
+            self.janela,
+            "Processando relatórios de Boletim...",
+            worker,
+            ao_concluir=ao_concluir,
+        )
 
     def executar_extrator_ponto(self):
         """Processa CSVs de ponto na pasta ./ponto e recarrega parquet."""
+        pasta_ponto = "ponto"
+        if not os.path.exists(pasta_ponto):
+            messagebox.showerror(
+                "Pasta não encontrada",
+                f"A pasta '{pasta_ponto}' não foi encontrada. Crie-a e coloque os dados de origem de ponto dentro dela.",
+            )
+            return
 
         def worker(set_total, set_arquivo):
-            pasta_ponto = "ponto"
-            if not os.path.exists(pasta_ponto):
+            processar_todos_csvs(pasta_ponto, set_total, set_arquivo)
+            return True
+
+        def ao_concluir(ok, erro):
+            if erro:
                 messagebox.showerror(
-                    "Pasta não encontrada",
-                    f"A pasta '{pasta_ponto}' não foi encontrada. Crie-a e coloque os dados de origem de ponto dentro dela.",
+                    "Erro ao Processar Ponto",
+                    f"Ocorreu um erro no processamento do Ponto:\n{erro}",
                 )
                 return
-
-            processar_todos_csvs(pasta_ponto, set_total, set_arquivo)
             self.recarregar_dados_ponto()
             if self.status_bar:
+                txt = self.status_bar.cget("text") or ""
                 self.status_bar.config(text="Dados de ponto atualizados com sucesso.")
 
-        mostrar_modal_progresso(self.janela, "Processando cartões de ponto...", worker)
+        mostrar_modal_progresso(
+            self.janela,
+            "Processando cartões de ponto...",
+            worker,
+            ao_concluir=ao_concluir,
+        )
 
     def recarregar_dados_ponto(self):
         """Recarrega o parquet do Ponto em self.df_ponto."""

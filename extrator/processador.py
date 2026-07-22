@@ -261,20 +261,17 @@ class ProcessadorPDF:
 
         # --- barra 1: total de arquivos ---
         total_arquivos = len(arquivos)
-        if callback_total:
-            try:
-                # define o total de passos (ex.: 4)
-                callback_total(total_arquivos)
-            except Exception:
-                pass
+        if total_arquivos == 0 and df_existente.empty:
+            raise ValueError(f"Nenhum arquivo PDF encontrado na pasta '{self.pasta_raiz}'.")
 
         novos, novos_var = [], []
 
         for i, pdf in enumerate(arquivos, start=1):
-            # --- barra 1: avança 1 passo por arquivo ---
+            # --- barra 1: avança a porcentagem total ---
             if callback_total:
                 try:
-                    callback_total(i)  # 1, 2, 3, ...
+                    pct_total = (i / total_arquivos) * 100 if total_arquivos else 100
+                    callback_total(pct_total)
                 except Exception:
                     pass
 

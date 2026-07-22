@@ -34,20 +34,72 @@ def extrair_dados_pdf(caminho_arquivo, set_arquivo=None):
         return None, {}
 
     cabecalho = {"BOLETIM": None, "Data de Medição": None, "Contrato": None}
-    linhas = texto_completo.split("\n")
+    linhas = [l.strip() for l in texto_completo.split("\n") if l.strip()]
+
     for i, linha in enumerate(linhas):
-        if i + 1 < len(linhas):
-            linha_seguinte = linhas[i + 1].strip()
-            if "BOLETIM" in linha.upper() and "MEDIÇÃO" not in linha.upper():
-                numeros = re.findall(r"\d{5,}", linha_seguinte)
-                if numeros:
-                    cabecalho["BOLETIM"] = numeros[-1]
-            if "DATA MEDIÇÃO" in linha and "CONTRATO" in linha:
-                partes = linha_seguinte.split()
-                if len(partes) > 0:
-                    cabecalho["Data de Medição"] = partes[0]
-                if len(partes) > 1:
-                    cabecalho["Contrato"] = partes[-1]
+        linha_upper = linha.upper()
+
+        # Parse CONTRATO
+        if "CONTRATO" in linha_upper:
+            m = re.search(r"CONTRATO\s*[:\s]*(\d{8,})", linha_upper)
+            if m:
+                cabecalho["Contrato"] = m.group(1)
+            elif i + 1 < len(linhas):
+                prox = linhas[i + 1]
+                nums = re.findall(r"\d{8,}", prox)
+                if nums:
+                    if "DATA" in linha_upper or linha_upper.endswith("CONTRATO"):
+                        cabecalho["Contrato"] = nums[-1]
+                    else:
+                        cabecalho["Contrato"] = nums[0]
+
+        # Parse BOLETIM (ignora o título 'BOLETIM DE MEDIÇÃO')
+        if "BOLETIM" in linha_upper and not re.search(r"BOLETIM\s+DE\s+MEDI[ÇC][ÃA]O", linha_upper):
+            m = re.search(r"BOLETIM\s*[:\s]*(\d{5,})", linha_upper)
+            if m:
+                cabecalho["BOLETIM"] = m.group(1)
+            elif i + 1 < len(linhas):
+                prox = linhas[i + 1]
+                nums = re.findall(r"\d{5,}", prox)
+                if nums:
+                    boletim_candidates = [n for n in nums if len(n) >= 5]
+                    if boletim_candidates:
+                        if "DATA" in linha_upper or linha_upper.startswith("BOLETIM"):
+                            cabecalho["BOLETIM"] = boletim_candidates[0]
+                        else:
+                            cabecalho["BOLETIM"] = boletim_candidates[-1]
+
+        # Parse DATA MEDIÇÃO
+        if "DATA" in linha_upper and ("MEDIÇÃO" in linha_upper or "MEDICÃO" in linha_upper or "MEDICAO" in linha_upper):
+            m = re.search(r"DATA\s+MEDI[ÇC][ÃA]O\s*[:\s]*(\d{2}[\./]\d{2}[\./]\d{4})", linha_upper)
+            if m:
+                cabecalho["Data de Medição"] = m.group(1)
+            elif i + 1 < len(linhas):
+                prox = linhas[i + 1]
+                dates = re.findall(r"\b\d{2}[\./]\d{2}[\./]\d{4}\b", prox)
+                if dates:
+                    cabecalho["Data de Medição"] = dates[0]
+
+    # Fallbacks globais via expressão regular caso alguma chave não tenha sido encontrada
+    if not cabecalho["BOLETIM"]:
+        m = re.search(r"(?:BOLETIM\s*[:\s]*|BOLETIM\s*\n\s*)(\d{5,})", texto_completo, re.IGNORECASE)
+        if m and m.group(1) != "00000":
+            cabecalho["BOLETIM"] = m.group(1)
+
+    if not cabecalho["Contrato"]:
+        m = re.search(r"(?:CONTRATO\s*[:\s]*|CONTRATO\s*\n\s*)(\d{8,})", texto_completo, re.IGNORECASE)
+        if m:
+            cabecalho["Contrato"] = m.group(1)
+        else:
+            m_file = re.search(r"CONTRATO\s*(\d{8,})", Path(caminho_arquivo).name if isinstance(caminho_arquivo, (str, Path)) else "", re.IGNORECASE)
+            if m_file:
+                cabecalho["Contrato"] = m_file.group(1)
+
+    if not cabecalho["Data de Medição"]:
+        m = re.search(r"(?:DATA\s+MEDI[ÇC][ÃA]O\s*[:\s]*|DATA\s+MEDI[ÇC][ÃA]O\s*\n\s*)(\d{2}[\./]\d{2}[\./]\d{4})", texto_completo, re.IGNORECASE)
+        if m:
+            cabecalho["Data de Medição"] = m.group(1)
+
     return texto_completo, cabecalho
 
 

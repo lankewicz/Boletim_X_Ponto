@@ -15,10 +15,16 @@ from tkinter import Label, Toplevel
 from ttkbootstrap import Progressbar
 
 
-def mostrar_modal_progresso(janela, mensagem, funcao_execucao):
+import threading
+from tkinter import Label, Toplevel
+
+from ttkbootstrap import Progressbar
+
+
+def mostrar_modal_progresso(janela, mensagem, funcao_execucao, ao_concluir=None):
     modal = Toplevel(janela)
     modal.title("Processando")
-    modal.geometry("400x180")
+    modal.geometry("420x190")
     modal.transient(janela)
     modal.grab_set()
     modal.resizable(False, False)
@@ -31,8 +37,7 @@ def mostrar_modal_progresso(janela, mensagem, funcao_execucao):
     )
     label.pack(padx=10, pady=(10, 5))
 
-    # NOVO: Label que mostra o nome do arquivo e o boletim
-    label_detalhe = Label(modal, text="", font=("Segoe UI", 9), justify="center", wraplength=380)
+    label_detalhe = Label(modal, text="", font=("Segoe UI", 9), justify="center", wraplength=390)
     label_detalhe.pack(pady=(0, 5))
 
     progress_total = Progressbar(modal, orient="horizontal", mode="determinate", maximum=100)
@@ -42,20 +47,44 @@ def mostrar_modal_progresso(janela, mensagem, funcao_execucao):
     progress_arquivo.pack(fill="x", padx=20, pady=(0, 10))
 
     def set_total(percent):
-        progress_total["value"] = max(0, min(100, percent))
-        modal.update_idletasks()
+        def _update():
+            if modal.winfo_exists():
+                try:
+                    progress_total["value"] = max(0, min(100, float(percent)))
+                except Exception:
+                    pass
+        janela.after(0, _update)
 
     def set_arquivo(percent, info=""):
-        progress_arquivo["value"] = max(0, min(100, percent))
-        if info:
-            label_detalhe.config(text=info)
-        modal.update_idletasks()
+        def _update():
+            if modal.winfo_exists():
+                try:
+                    progress_arquivo["value"] = max(0, min(100, float(percent)))
+                    if info:
+                        label_detalhe.config(text=info)
+                except Exception:
+                    pass
+        janela.after(0, _update)
 
     def thread_target():
+        erro = None
+        resultado = None
         try:
-            funcao_execucao(set_total, set_arquivo)
+            resultado = funcao_execucao(set_total, set_arquivo)
+        except Exception as e:
+            erro = e
+            print(f"[ERRO] Erro no processamento em segundo plano: {e}")
         finally:
-            if modal.winfo_exists():
-                modal.destroy()
+            def _finalizar():
+                if modal.winfo_exists():
+                    try:
+                        modal.grab_release()
+                    except Exception:
+                        pass
+                    modal.destroy()
+                if ao_concluir:
+                    ao_concluir(resultado, erro)
+            janela.after(0, _finalizar)
 
     threading.Thread(target=thread_target, daemon=True).start()
+
