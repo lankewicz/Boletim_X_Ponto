@@ -144,3 +144,132 @@ def extrair_cartao_ponto(texto):
                 )
 
     return pd.DataFrame(registros)
+
+# =================================================================================
+# NOVO: utilitários para VAR (pt-BR numérico + mapeamentos)
+# =================================================================================
+import re
+import pandas as pd
+
+_MAP_TERMO_POR_VAR = {
+    "VAR000": "HORA NORMAL",  # DSP001 HORA NORMAL
+    "VAR001": "H.E.",         # Horas Extras 50%
+    "VAR002": "H.E.N.",       # Horas Extras Noturnas 50%
+    "VAR003": "H.E.D.",       # Horas Extras 100%
+    "VAR004": "H.E.N.D.",     # Horas Extras Noturnas 100%
+    "VAR005": "S.A.",         # Sobreaviso
+    "VAR006": "H.N.",         # Horas Noturnas (adicional)
+    "VAR007": "KM",           # Quilometragem rodada (base para VAR008 também)
+    "VAR008": "DESLOC.",      # Deslocamento de pessoal p/KM
+}
+
+def _ptbr_float(s: str | None) -> float | None:
+    """Converte '10.809,438' -> 10809.438; retorna None se vazio/inválido."""
+    if s is None:
+        return None
+    s = str(s).strip()
+    if not s:
+        return None
+    s = s.replace('.', '').replace(',', '.')
+    try:
+        return float(s)
+    except Exception:
+        return None
+
+# =================================================================================
+# NOVO: localizar o valor da US do boletim (ex.: 'R$ 42,01', 'R$ 45,00', ...)
+# =================================================================================
+def parse_valor_us(texto: str) -> float | None:
+    """
+    Procura o primeiro padrão 'R$ 9.999,99' no texto.
+    Se houver mais de um, retorna o primeiro (geralmente o valor US do boletim).
+    """
+    m = re.search(r'R\$\s*([0-9\.\,]{3,})', texto)
+    return _ptbr_float(m.group(1)) if m else None
+
+# =================================================================================
+# NOVO: extrair bloco de itens VAR da seção 'DESCRIÇÃO  US MÉDIA  QTDE  TOTAL'
+# =================================================================================
+def _slice_bloco_var(texto: str) -> str:
+    """
+    Corta o texto a partir do cabeçalho da tabela dos itens faturados.
+    Aceita 'MÉDIA' com/sem acento.
+    """
+    cab = re.search(r'DESCRI[ÇC][ÃA]O\s+US\s+M[EÉ]DIA\s+QTDE\s+TOTAL', texto, flags=re.IGNORECASE)
+    if not cab:
+        return ""
+    return texto[cab.end():]
+
+def parse_var_itens(texto: str) -> pd.DataFrame:
+    """
+    Lê as linhas 'VARxxx - DESCRIÇÃO  US  QTDE  TOTAL' do bloco de itens do BMD.
+    Retorna colunas: var_code, descrição, US, qtde, total (total é auxiliar para conferência).
+    """
+    bloco = _slice_bloco_var(texto)
+    if not bloco:
+        return pd.DataFrame(columns=['var_code', 'descrição', 'US', 'qtde', 'total'])
+
+    padrao = re.compile(
+        r'^(VAR\d{3})\s*-\s*(.*?)\s+([0-9\.,]+)\s+([0-9\.,]+)\s+([0-9\.,]+)$',
+        flags=re.MULTILINE
+    )
+    rows = []
+    for m in padrao.finditer(bloco):
+        rows.append({
+            'var_code': m.group(1).strip(),
+            'descrição': m.group(2).strip(),
+            'US': _ptbr_float(m.group(3)),
+            'qtde': _ptbr_float(m.group(4)),
+            'total': _ptbr_float(m.group(5)),  # não faz parte do layout final; só para QA
+        })
+    df = pd.DataFrame(rows, columns=['var_code', 'descrição', 'US', 'qtde', 'total'])
+    return df
+
+# =================================================================================
+# NOVO: montagem de dataset padrão para os VAR (com seus termos canônicos)
+# =================================================================================
+def montar_dataset_var(cabecalho: dict, texto: str, incluir_termo: bool = True) -> pd.DataFrame:
+    """
+    Monta o dataset com as colunas finais:
+    contrato, boletim, data_medicao, valor_us, var_code, [termo], descrição, US, qtde
+
+    - 'termo' é opcional; quando True, usa seus rótulos: HORA NORMAL, H.E., H.E.D., ...
+    - 'valor_us' é lido do cabeçalho (R$ ...), se presente.
+    """
+    df_var = parse_var_itens(texto)
+    if df_var.empty:
+        cols = ['contrato','boletim','data_medicao','valor_us','var_code','descrição','US','qtde']
+        if incluir_termo:
+            cols.insert(cols.index('descrição'), 'termo')
+        return pd.DataFrame(columns=cols)
+
+    valor_us = parse_valor_us(texto)
+    df_var.insert(0, 'contrato', cabecalho.get('Contrato'))
+    df_var.insert(1, 'boletim', cabecalho.get('BOLETIM'))
+    df_var.insert(2, 'data_medicao', cabecalho.get('Data de Medição'))
+    df_var.insert(3, 'valor_us', valor_us)
+
+    if incluir_termo:
+        df_var.insert(5, 'termo', df_var['var_code'].map(_MAP_TERMO_POR_VAR))
+
+    # Ordena colunas conforme layout desejado
+    base_cols = ['contrato','boletim','data_medicao','valor_us','var_code']
+    if incluir_termo:
+        out_cols = base_cols + ['termo','descrição','US','qtde']
+    else:
+        out_cols = base_cols + ['descrição','US','qtde']
+    return df_var[out_cols]
+
+# =================================================================================
+# NOVO (opcional): fluxo completo para extrair VAR direto do PDF
+# =================================================================================
+def extrair_var_dataset(caminho_arquivo: str, set_arquivo=None, incluir_termo: bool = True) -> pd.DataFrame:
+    """
+    Abre o PDF (reusa extrair_dados_pdf), e retorna o DataFrame dos VAR no layout final.
+    """
+    texto, cab = extrair_dados_pdf(caminho_arquivo, set_arquivo=set_arquivo)
+    if not texto:
+        return pd.DataFrame(columns=['contrato','boletim','data_medicao','valor_us',
+                                     'var_code'] + (['termo'] if incluir_termo else []) +
+                                    ['descrição','US','qtde'])
+    return montar_dataset_var(cab, texto, incluir_termo=incluir_termo)

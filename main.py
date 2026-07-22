@@ -9,27 +9,25 @@
 # main.py
 
 # main.py
-import importlib.util
 import os
-import subprocess
 import sys
+from pathlib import Path
 
-sys.path.insert(0, "./utils")  # garante que utils esteja no path
+# Configura path
+sys.path.insert(0, str(Path(__file__).parent / "utils"))
 
-# 1) Desliga o auto-run em thread e força verificação completa bloqueante
-# os.environ["BOLETIM_AUTORUN"] = "0"
+# Configura verificação forçada
 os.environ["BOLETIM_FORCE_DEP_CHECK"] = "1"
 
-if importlib.util.find_spec("packaging") is None:
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "packaging"])
-
-# 3) Importa o verificador e roda de forma BLOQUEANTE
-import utils.verificador_dependencias as deps
-
-deps.verificar_dependencias_automaticamente(".")  # só retorna quando terminar
-
-# 4) Agora é seguro carregar o resto
-from interface.app import RelatorioHorasApp  # noqa: E402
-
-if __name__ == "__main__":
+try:
+    # Verifica dependências
+    import utils.verificador_dependencias as deps
+    deps.verificar_dependencias_automaticamente(".")
+    
+    # Inicia aplicação
+    from interface.app import RelatorioHorasApp
     app = RelatorioHorasApp()
+    
+except Exception as e:
+    print(f"Erro ao iniciar aplicação: {e}")
+    input("Pressione Enter para sair...")

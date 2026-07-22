@@ -5,7 +5,7 @@ import ttkbootstrap as ttkb
 from tkinter import ttk
 import pandas as pd
 
-from utils.relatorios import relatorio_sa_por_registro_periodo
+from utils.processador import relatorio_sa_por_registro_periodo
 
 def _fmt_ptbr(v: float) -> str:
     try:

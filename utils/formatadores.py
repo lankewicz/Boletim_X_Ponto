@@ -48,6 +48,262 @@ NUM_FMT_MONEY = '"R$" * #.##0,00'
 
 
 # ============================================================
+# Excel (openpyxl) — helpers específicos p/ Comparação/Diferenças
+# ============================================================
+from openpyxl.utils import get_column_letter as _gcl
+from openpyxl.styles import PatternFill, Font, Alignment
+
+# Paleta usada na tela
+_FILL_BOL = PatternFill("solid", fgColor="B7DFFB")   # azul
+_FILL_PTO = PatternFill("solid", fgColor="C5EDC1")   # verde
+_FILL_DIF = PatternFill("solid", fgColor="FFDAB9")   # pêssego
+
+def colorir_negativos_range(ws, r1: int, r2: int, c1: int, c2: int):
+    """Formata em VERMELHO+NEGRITO qualquer célula < 0 (ou string com sinal “-”)."""
+    for r in range(r1, r2 + 1):
+        for c in range(c1, c2 + 1):
+            v = ws.cell(row=r, column=c).value
+            try:
+                neg = (isinstance(v, (int, float)) and v < 0) or str(v).strip().startswith(("-", "−"))
+            except Exception:
+                neg = False
+            if neg:
+                ws.cell(row=r, column=c).font = Font(color="FF0000", bold=True)
+
+def _pintar_faixa(ws, row, col_ini, col_fim, fill):
+    for c in range(col_ini, col_fim + 1):
+        ws.cell(row=row, column=c).fill = fill
+
+def _pintar_coluna(ws, col, r1, r2, fill):
+    for r in range(r1, r2 + 1):
+        ws.cell(row=r, column=col).fill = fill
+        ws.cell(row=r, column=col).alignment = Alignment(horizontal="right", vertical="center")
+
+def escrever_comparacao_wb(
+    wb,
+    *,
+    sheet_name: str,
+    df_final: "pd.DataFrame",
+    headers_horas: list[str],
+    titulo: str,
+    periodo: str,
+):
+    """Cria aba 'Comparação' com cabeçalho corporativo + 3 blocos (Boletim, Ponto, Diferença)."""
+    ws = wb.create_sheet(title=sheet_name)
+    # Cabeçalho textual
+    ws.append([titulo])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=1 + (3 * len(headers_horas)))
+    ws["A1"].font = Font(bold=True, size=14)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.append([f"Período: {periodo}"])
+    ws.append([])  # linha em branco
+    # Linha de grupos + linha do cabeçalho real
+    row_groups = ws.max_row + 1
+    ws.append([""] + ["Boletim"] * len(headers_horas) + ["Ponto"] * len(headers_horas) + ["Diferença"] * len(headers_horas))
+    row_header = ws.max_row + 1
+    ws.append(["Data"] + headers_horas * 3)
+    # Dados
+    first_data_row = row_header + 1
+    for _, row in df_final.iterrows():
+        ws.append(row.tolist())
+    last_row = ws.max_row
+    # Estilo base (borda, zebra, autofiltro, freeze) ancorado no cabeçalho real
+    formatar_planilha_excel(ws, startrow=row_header)
+    # Pintar faixas dos grupos
+    c_ini, c_fim = 2, 1 + len(headers_horas)
+    _pintar_faixa(ws, row_groups, c_ini, c_fim, _FILL_BOL)
+    for c in range(c_ini, c_fim + 1):
+        _pintar_coluna(ws, c, first_data_row, last_row, _FILL_BOL)
+    c_ini, c_fim = c_fim + 1, c_fim + len(headers_horas)
+    _pintar_faixa(ws, row_groups, c_ini, c_fim, _FILL_PTO)
+    for c in range(c_ini, c_fim + 1):
+        _pintar_coluna(ws, c, first_data_row, last_row, _FILL_PTO)
+    c_ini, c_fim = c_fim + 1, c_fim + len(headers_horas)
+    _pintar_faixa(ws, row_groups, c_ini, c_fim, _FILL_DIF)
+    for c in range(c_ini, c_fim + 1):
+        _pintar_coluna(ws, c, first_data_row, last_row, _FILL_DIF)
+    colorir_negativos_range(ws, first_data_row, last_row, c_ini, c_fim)
+    # Larguras
+    ws.column_dimensions["A"].width = 14
+    for c in range(2, 2 + 3 * len(headers_horas)):
+        ws.column_dimensions[_gcl(c)].width = max(12, ws.column_dimensions[_gcl(c)].width or 0)
+    return ws
+
+def escrever_diferencas_wb(
+    wb,
+    *,
+    sheet_name: str,
+    df_dif: "pd.DataFrame",
+    headers_horas: list[str],
+    titulo: str,
+    periodo: str,
+):
+    """Cria aba 'Diferenças' (Boletim − Ponto) com cabeçalho corporativo."""
+    ws = wb.create_sheet(title=sheet_name)
+    ws.append([titulo])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=1 + len(headers_horas))
+    ws["A1"].font = Font(bold=True, size=14)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.append([f"Período: {periodo}"])
+    ws.append([])
+    row_group = ws.max_row + 1
+    ws.append([""] + ["Diferença"] * len(headers_horas))
+    row_header = ws.max_row + 1
+    ws.append(["Data"] + headers_horas)
+    first_data_row = row_header + 1
+    for _, row in df_dif.iterrows():
+        ws.append(row.tolist())
+    last_row = ws.max_row
+    formatar_planilha_excel(ws, startrow=row_header)
+    c_ini, c_fim = 2, 1 + len(headers_horas)
+    _pintar_faixa(ws, row_group, c_ini, c_fim, _FILL_DIF)
+    for c in range(c_ini, c_fim + 1):
+        _pintar_coluna(ws, c, first_data_row, last_row, _FILL_DIF)
+    colorir_negativos_range(ws, first_data_row, last_row, c_ini, c_fim)
+    ws.column_dimensions["A"].width = 14
+    for c in range(2, 2 + len(headers_horas)):
+        ws.column_dimensions[_gcl(c)].width = max(12, ws.column_dimensions[_gcl(c)].width or 0)
+    return ws
+
+
+ 
+# ----------------------------------------------------------------------
+# Excel (openpyxl) – helpers específicos para a aba Comparação
+# ----------------------------------------------------------------------
+from openpyxl.styles import PatternFill, Font, Alignment
+from openpyxl.formatting.rule import CellIsRule
+from openpyxl.utils import get_column_letter as _gcl
+
+AZUL_BOL = PatternFill("solid", fgColor="B7DFFB")
+VERDE_PTO = PatternFill("solid", fgColor="C5EDC1")
+LARANJA_DIF = PatternFill("solid", fgColor="FFDAB9")
+
+def _pintar_faixa(ws: Worksheet, r0: int, c1: int, c2: int, fill: PatternFill):
+    for c in range(c1, c2 + 1):
+        ws.cell(row=r0, column=c).fill = fill
+
+def _pintar_coluna(ws: Worksheet, c: int, r1: int, r2: int, fill: PatternFill, align_right=True):
+    for r in range(r1, r2 + 1):
+        cell = ws.cell(row=r, column=c)
+        cell.fill = fill
+        if align_right:
+            cell.alignment = Alignment(horizontal="right", vertical="center")
+
+def colorir_negativos_range(ws: Worksheet, r1: int, r2: int, c1: int, c2: int):
+    """Deixa texto vermelho e negrito quando o valor é negativo (string ou numérico)."""
+    for r in range(r1, r2 + 1):
+        for c in range(c1, c2 + 1):
+            cell = ws.cell(row=r, column=c)
+            v = cell.value
+            neg = False
+            try:
+                if isinstance(v, (int, float)) and v < 0:
+                    neg = True
+                else:
+                    s = str(v).strip()
+                    neg = s.startswith("-") or s.startswith("−")
+            except Exception:
+                neg = False
+            if neg:
+                cell.font = Font(color="FF0000", bold=True)
+
+def escrever_comparacao_wb(
+    wb,
+    *,
+    sheet_name: str,
+    df_final: pd.DataFrame,
+    headers_horas: list[str],
+    titulo: str,
+    periodo: str,
+) -> Worksheet:
+
+    """Gera a aba Excel da Comparação com cabeçalho + 3 blocos (Boletim/Ponto/Diferença)."""
+    ws = wb.create_sheet(title=sheet_name)
+
+    # Título / Período
+    ws.append([titulo])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=1 + (3 * len(headers_horas)))
+    ws["A1"].font = Font(bold=True, size=14)
+    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.append([f"Período: {periodo}"])
+    ws.append([])  # linha em branco
+
+    # Linha de grupos + linha de cabeçalho dos dados
+    row_groups = ws.max_row + 1
+    ws.append([""] + ["Boletim"] * len(headers_horas) + ["Ponto"] * len(headers_horas) + ["Diferença"] * len(headers_horas))
+    row_header = ws.max_row + 1
+    ws.append(["Data"] + headers_horas * 3)
+
+    # Dados
+    first_data_row = row_header + 1
+    for _, row in df_final.iterrows():
+        ws.append(row.tolist())
+    last_row = ws.max_row
+
+    # Formatação base (zebra, borda, autofiltro, freeze) sobre a linha de cabeçalho real
+    formatar_planilha_excel(ws, startrow=row_header)
+
+    # Pintura dos blocos
+    # Boletim
+    c_ini, c_fim = 2, 1 + len(headers_horas)
+    _pintar_faixa(ws, row_groups, c_ini, c_fim, AZUL_BOL)
+    for c in range(c_ini, c_fim + 1):
+        _pintar_coluna(ws, c, first_data_row, last_row, AZUL_BOL)
+    # Ponto
+    c_ini, c_fim = c_fim + 1, c_fim + len(headers_horas)
+    _pintar_faixa(ws, row_groups, c_ini, c_fim, VERDE_PTO)
+    for c in range(c_ini, c_fim + 1):
+        _pintar_coluna(ws, c, first_data_row, last_row, VERDE_PTO)
+    # Diferença
+    c_ini, c_fim = c_fim + 1, c_fim + len(headers_horas)
+    _pintar_faixa(ws, row_groups, c_ini, c_fim, LARANJA_DIF)
+    for c in range(c_ini, c_fim + 1):
+        _pintar_coluna(ws, c, first_data_row, last_row, LARANJA_DIF)
+    # Negativos em Diferença
+    colorir_negativos_range(ws, first_data_row, last_row, c_ini, c_fim)
+
+    # Larguras
+    ws.column_dimensions["A"].width = 14
+    for c in range(2, 2 + 3 * len(headers_horas)):
+        ws.column_dimensions[_gcl(c)].width = max(12, ws.column_dimensions[_gcl(c)].width or 0)
+    return ws
+
+def escrever_diferencas_wb(
+    wb,
+    *,
+    sheet_name: str,
+    df_dif: pd.DataFrame,
+    headers_horas: list[str],
+    titulo: str,
+    periodo: str,
+) -> Worksheet:
+    """Gera a aba Excel apenas com as Diferenças (boletim − ponto)."""
+    ws = wb.create_sheet(title=sheet_name)
+    ws.append([titulo]); ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=1 + len(headers_horas))
+    ws["A1"].font = Font(bold=True, size=14); ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    ws.append([f"Período: {periodo}"]); ws.append([])
+    row_group = ws.max_row + 1; ws.append([""] + ["Diferença"] * len(headers_horas))
+    row_header = ws.max_row + 1; ws.append(["Data"] + headers_horas)
+    first_data_row = row_header + 1
+    for _, row in df_dif.iterrows():
+        ws.append(row.tolist())
+    last_row = ws.max_row
+
+    formatar_planilha_excel(ws, startrow=row_header)
+    # pinta bloco
+    c_ini, c_fim = 2, 1 + len(headers_horas)
+    _pintar_faixa(ws, row_group, c_ini, c_fim, LARANJA_DIF)
+    for c in range(c_ini, c_fim + 1):
+        _pintar_coluna(ws, c, first_data_row, last_row, LARANJA_DIF)
+    colorir_negativos_range(ws, first_data_row, last_row, c_ini, c_fim)
+
+    ws.column_dimensions["A"].width = 14
+    for c in range(2, 2 + len(headers_horas)):
+        ws.column_dimensions[_gcl(c)].width = max(12, ws.column_dimensions[_gcl(c)].width or 0)
+    return ws
+
+
+# ============================================================
 # Núcleo: conversões HH:MM ↔ decimal
 # ============================================================
 
@@ -1046,8 +1302,21 @@ def formatar_planilha_excel(
                 # zebra
                 cell.fill = fill
 
-                # formatação numérica (pt-BR: vírgula decimal)
+                # formatação numérica (pt-BR: vírgula decimal) + coerção de strings numéricas
                 if detectar_numeros and _is_number(cell.value):
+                    # Se vier como string "1.234,56", converte para número real
+                    if isinstance(cell.value, str):
+                        try:
+                            raw = cell.value.strip()
+                            # trata "1.234,56" e "1234,56"
+                            v = (
+                                float(raw.replace(".", "").replace(",", ".", 1))
+                                if (raw.count(",") == 1 and raw.count(".") > 1)
+                                else float(raw.replace(",", ".", 1))
+                            )
+                            cell.value = v
+                        except Exception:
+                            pass
                     fmt = _infer_number_format(cell.value) or NUM_FMT_2C
                     cell.number_format = fmt
 
@@ -1184,13 +1453,18 @@ def escrever_df_formatado(
                        font=Font(color="006100"), fill=PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"))
         )
 
-    # 5) Destacar linha TOTAL (busca na 1ª coluna por 'TOTAL')
-    if destacar_total and len(df) > 0:
+    # 5) Destacar linha TOTAL/TOTAIS (aceita 'TOTAL', 'TOTAIS', 'TOTAIS GERAIS', com/sem ':')
+    if destacar_total and last_row >= startrow + 1:
+        def _is_total_label(s: str) -> bool:
+            if not isinstance(s, str):
+                return False
+            t = s.strip().upper().rstrip(":")
+            return t in {"TOTAL", "TOTAIS", "TOTAIS GERAIS"}
         total_rows = []
         primeira_coluna = startcol
         for i in range(startrow + 1, last_row + 1):
             v = ws.cell(row=i, column=primeira_coluna).value
-            if isinstance(v, str) and v.strip().upper() == "TOTAL":
+            if _is_total_label(v):
                 total_rows.append(i)
         if total_rows:
             fill_total = PatternFill("solid", fgColor="D9D9D9")

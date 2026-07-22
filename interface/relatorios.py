@@ -13,12 +13,13 @@ from utils.comparacao import (
 from utils.dataframe_utils import resolver_base_ponto
 from datetime import datetime as dt
 # +++ Relatório Geral (sobreavisos) +++
-from utils.relatorios import (
+from utils.processador import (
     carregar_boletim_parquet,
     relatorio_sa_por_registro_periodo,
     RelatorioSADialog,
     ARQUIVO_PADRAO,
 )
+
 import tkinter as tk
 import pandas as pd
 

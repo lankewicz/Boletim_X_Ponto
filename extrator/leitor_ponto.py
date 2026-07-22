@@ -8,8 +8,8 @@ from io import StringIO
 
 import pandas as pd
 
-CAMINHO_PARQUET = "data/RegistroPonto.parquet"
-CAMINHO_VERIFICACAO = "data/RegistroPonto_VERIFICACAO.txt"
+CAMINHO_PARQUET_PADRAO = "data/RegistroPonto.parquet"
+CAMINHO_VERIFICACAO_PADRAO = "data/RegistroPonto_VERIFICACAO.txt"
 
 
 def tempo_para_decimal(valor):
@@ -73,7 +73,11 @@ def ler_arquivo_compativel(path):
         return None
 
 
-def processar_todos_csvs(pasta_ponto, set_total=None, set_arquivo=None):
+def processar_todos_csvs(pasta_ponto, caminho_saida=None, set_total=None, set_arquivo=None):
+    if caminho_saida is None:
+        caminho_saida = CAMINHO_PARQUET_PADRAO
+    caminho_verificacao = caminho_saida.replace(".parquet", "_VERIFICACAO.txt")
+
     arquivos = []
     for raiz, _, nomes in os.walk(pasta_ponto):
         for nome in nomes:
@@ -135,6 +139,30 @@ def processar_todos_csvs(pasta_ponto, set_total=None, set_arquivo=None):
                     "Extra 100%N": tempo_para_decimal(linha.get("Extra   100%N", "")),
                     "chave_unica": chave,
                 }
+                registro = {
+                "Nome": nome.upper(),
+                "CPF": cpf,
+                "PIS": pis,
+                "Data": data.date(),
+
+                # Totais “normais”
+                "Total Normais": tempo_para_decimal(linha.get("Total Normais", "")),
+                "Total Noturno": tempo_para_decimal(linha.get("Total Noturno", "")),
+
+                # Extras diurnos
+                "Extra 50%D": tempo_para_decimal(linha.get("Extra   50%D", "")),
+                "Extra 100%D": tempo_para_decimal(linha.get("Extra   100%D", "")),
+
+                # Extras noturnos
+                "Extra 50%N": tempo_para_decimal(linha.get("Extra   50%N", "")),
+                "Extra 100%N": tempo_para_decimal(linha.get("Extra   100%N", "")),
+
+                # NOVO CAMPO: Interjornada
+                "Interjornada": tempo_para_decimal(linha.get("Interjornada", "")),
+
+                "chave_unica": chave,
+            }
+
                 todos_registros.append(registro)
             except Exception as e:
                 print(f"[ERRO] Falha na linha em {caminho}: {e}")
@@ -145,21 +173,37 @@ def processar_todos_csvs(pasta_ponto, set_total=None, set_arquivo=None):
         print("[AVISO] Nenhum dado de ponto processado.")
         return
 
-    if os.path.exists(CAMINHO_PARQUET):
-        df_antigo = pd.read_parquet(CAMINHO_PARQUET)
+    if os.path.exists(caminho_saida):
+        df_antigo = pd.read_parquet(caminho_saida)
         df_final = pd.concat([df_antigo, df_final], ignore_index=True)
 
     df_final.drop_duplicates(subset=["chave_unica"], keep="last", inplace=True)
 
     df_final["Data"] = pd.to_datetime(df_final["Data"], errors="coerce")
-    df_final.to_parquet(CAMINHO_PARQUET, index=False)
+    df_final.to_parquet(caminho_saida, index=False)
 
     try:
-        with open(CAMINHO_VERIFICACAO, "w", encoding="utf-8") as f:
-            f.write("Data;Nome;CPF;PIS;Total Normais;Extra 50%D;Extra 100%D;Total Noturno\n")
+        with open(caminho_verificacao, "w", encoding="utf-8") as f:
+            f.write(
+                "Data;Nome;CPF;PIS;"
+                "Total Normais;Total Noturno;"
+                "Extra 50%D;Extra 100%D;"
+                "Extra 50%N;Extra 100%N;"
+                "Interjornada\n"
+            )
             for _, linha in df_final.head(20).iterrows():
                 f.write(
-                    f"{linha['Data']};{linha['Nome']};{linha['CPF']};{linha['PIS']};{linha.get('Total Normais', 0)};{linha.get('Extra 50%D', 0)};{linha.get('Extra 100%D', 0)};{linha.get('Total Noturno', 0)}\n"
+                    f"{linha['Data']};"
+                    f"{linha['Nome']};"
+                    f"{linha['CPF']};"
+                    f"{linha['PIS']};"
+                    f"{linha.get('Total Normais', 0)};"
+                    f"{linha.get('Total Noturno', 0)};"
+                    f"{linha.get('Extra 50%D', 0)};"
+                    f"{linha.get('Extra 100%D', 0)};"
+                    f"{linha.get('Extra 50%N', 0)};"
+                    f"{linha.get('Extra 100%N', 0)};"
+                    f"{linha.get('Interjornada', 0)}\n"
                 )
     except Exception as e:
         print(f"[AVISO] Falha ao gerar verificação: {e}")

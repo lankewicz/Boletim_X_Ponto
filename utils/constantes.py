@@ -8,6 +8,7 @@ HEADERS_VIZ = [
     "Extra 100%D",
     "Extra 50%N",
     "Extra 100%N",
+    "Inter jornada",
 ]
 
 MAP_BOL = {
@@ -26,6 +27,8 @@ MAP_PTO = {
     "Extra 100%D": "Extra 100%D",
     "Extra 50%N": "Extra 50%N",
     "Extra 100%N": "Extra 100%N",
+    "Inter jornada": "Interjornada",
+    
 }
 
 SPACER_AFTER_TOTALS_DIFF = 1

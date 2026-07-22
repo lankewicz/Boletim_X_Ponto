@@ -54,6 +54,7 @@ from interface.relatorios import (
     abrir_relatorio_geral,
 )
 
+
 class RelatorioHorasApp:
     def __init__(self):
         # Arquivos/pastas usados pelo app
@@ -745,6 +746,7 @@ class RelatorioHorasApp:
     # ===============================================================
     # TELAS DE BOLETIM / PONTO (exibição simples)
     # ===============================================================
+    '''
     def limpar_relatorio_visualizacao(self):
         """Limpa widgets de árvores/sheets da tela principal."""
         if hasattr(self, "tree") and self.tree:
@@ -780,7 +782,26 @@ class RelatorioHorasApp:
                     valor = linha.get(col_df)
                     valores.append(self.formatar_tempo(valor) if pd.notna(valor) else "")
                 self.tree_ponto.insert("", "end", values=valores)
+    '''
+    def limpar_relatorio_visualizacao(self):
+        """Limpa widgets de árvores/sheets da tela principal."""
+        if hasattr(self, "tree") and self.tree:
+            for i in self.tree.get_children():
+                self.tree.delete(i)
+        if hasattr(self, "tree_totais") and self.tree_totais:
+            for i in self.tree_totais.get_children():
+                self.tree_totais.delete(i)
+        if hasattr(self, "tree_ponto") and self.tree_ponto:
+            for i in self.tree_ponto.get_children():
+                self.tree_ponto.delete(i)
 
+        if hasattr(self, "sheet_boletim") and self.sheet_boletim:
+            self.sheet_boletim.set_sheet_data([])
+
+        self.df_filtrado = None
+        if self.combo_funcionario:
+            self.combo_funcionario.set("")
+            
     def atualizar_interface_filtros(self):
         """Ajusta datas padrão e atualiza a combo APENAS com quem tem boletim no período."""
         if self.dados_df is None or self.dados_df.empty:
@@ -1624,17 +1645,29 @@ class RelatorioHorasApp:
 
 
     def abrir_formulario_geral(self):
-        from interface.relatorios import abrir_relatorio_geral
+        # Usa o utils/relatorios diretamente para montar e abrir a janela
+        from utils.processador import (
+            ARQUIVO_PADRAO,
+            carregar_boletim_parquet,
+            relatorio_sa_por_registro_periodo,
+            RelatorioSADialog,
+        )
+        
         parent = getattr(self, "janela", None) or getattr(self, "window", None) or getattr(self, "root", None)
+
+        # tenta pegar as datas atuais da UI (aceita dd/mm/aaaa)
         try:
             data_ini = self.cal_data_inicial.entry.get()
             data_fim = self.cal_data_final.entry.get()
         except Exception:
             data_ini = data_fim = None
-        abrir_relatorio_geral(parent=parent, data_ini=data_ini, data_fim=data_fim)
 
-        #parent = getattr(self, "window", None) or getattr(self, "root", None)
-        #abrir_relatorio_geral(parent=parent, data_ini=di, data_fim=df_)
+        df_bol = carregar_boletim_parquet()  # data/RegistroBoletim.parquet
+        df_view = relatorio_sa_por_registro_periodo(df_bol, data_ini, data_fim)
+        RelatorioSADialog(parent, df_view, data_ini=data_ini, data_fim=data_fim)
+
+    
+    
     # --- Helpers de “faixa informativa” para todas as abas ---
 
     def _format_info_bol_pto(self, nome_boletim: str, registro: str | None, nome_ponto: str | None) -> str:

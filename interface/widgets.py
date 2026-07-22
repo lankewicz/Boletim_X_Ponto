@@ -614,6 +614,7 @@ def _build_tab_ponto(app, notebook: ttk.Notebook) -> None:
             "Extra\n 100%D",
             "Extra\n 50%N",
             "Extra\n 100%N",
+            "Inter\njornada",
         ]
     )
 

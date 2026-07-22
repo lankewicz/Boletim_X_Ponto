@@ -1,23 +1,11 @@
-# interface/exportador.py (versão enxuta)
+# interface/exportador.py (versão completa com melhorias visuais)
 # ------------------------------------------------------------
-# Exportadores (Excel/PDF) centralizados e sem duplicações de
-# formatação. Este módulo consome utilitários de utils/formatadores
-# (cabeçalho, larguras, soma preservando formato e detecção de
-# negativos) e mantém apenas o mínimo de helpers locais para
-# leitura do tksheet e organização de abas/arquivos.
-#
-# Principais funções expostas (compatíveis com o app):
-# - exportar_para_excel(app)
-# - exportar_para_pdf(app)
-# - exportar_ponto_para_excel(app, completo=False)
-# - exportar_ponto_para_pdf(app, completo=False)
-# - exportar_comparacao_individual(app)
-# - exportar_comparacao_unificada(app)   ← inclui exportação "Diferenças apenas"
-# - exportar_comparacao_geral(app)
-# - exportar_totais_mensais(df_group, nome_base, pasta_destino)
-# - exportar_totais_consolidados_excel(app, lista_contratos)  ← usa utils/formatadores
+# Exportadores Excel/PDF com formatação profissional e moderna
+# Melhorias: cores sofisticadas, bordas elegantes, hierarquia
+# visual aprimorada, formatação numérica consistente
 #
 # Autor: Valdinei Lankewicz
+# Melhorias visuais: 2025
 # ------------------------------------------------------------
 from __future__ import annotations
 
@@ -31,7 +19,10 @@ from difflib import get_close_matches
 import pandas as pd
 _pd = pd 
 from openpyxl import Workbook
-from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.styles import (
+    Alignment, Font, PatternFill, Border, Side, 
+    numbers, GradientFill
+)
 from openpyxl.utils import get_column_letter as _gcl
 
 from reportlab.lib import colors
@@ -41,40 +32,188 @@ from reportlab.lib.units import cm, inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 # ============================================================
+# DEFINIÇÃO DE ESTILOS PROFISSIONAIS
+# ============================================================
+
+# Paleta de cores profissional
+CORES = {
+    'primaria': '1F4788',      # Azul escuro profissional
+    'secundaria': '4472C4',    # Azul médio
+    'destaque': '2E75B6',      # Azul destaque
+    'sucesso': '70AD47',       # Verde sucesso
+    'alerta': 'FFC000',        # Amarelo/Laranja
+    'erro': 'C00000',          # Vermelho
+    'neutro_claro': 'F2F2F2',  # Cinza muito claro
+    'neutro_medio': 'D9E1F2',  # Azul acinzentado claro
+    'branco': 'FFFFFF',        # Branco
+    'boletim': 'E7F0FF',       # Azul muito claro
+    'ponto': 'E7FBEA',         # Verde muito claro
+    'diferenca': 'FFF4E7',     # Laranja muito claro
+}
+
+def criar_borda(estilo='medium', cor='000000'):
+    """Cria bordas padronizadas"""
+    side = Side(style=estilo, color=cor)
+    return Border(left=side, right=side, top=side, bottom=side)
+
+# ------------------------------------------------------------
+# Helper robusto para identificar linhas de TOTAL
+# Cobre "TOTAL", "TOTAIS:", "TOTAL GERAL", etc.
+# ------------------------------------------------------------
+def _eh_total(valor) -> bool:
+    s = str(valor or "").strip().upper()
+    # aceita TOTAIS:, TOTAIS, TOTAL, TOTAL GERAL...
+    return s.startswith("TOTAIS") or s.startswith("TOTAL")
+
+
+def aplicar_cabecalho_profissional(ws, titulo, contrato, dt_ini, dt_fim, boletins, df_cols):
+    """
+    Aplica um cabeçalho no TOPO (linhas 1–4), sem usar ws.append,
+    para não empurrar o conteúdo pro final quando o DF já foi escrito com startrow>=7.
+    """
+    max_col = max(1, len(df_cols))
+
+    # === Linha 1: TÍTULO ===
+    ws.row_dimensions[1].height = 30
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_col)
+    c = ws.cell(row=1, column=1, value=str(titulo) if titulo is not None else "")
+    c.font = Font(name='Calibri', size=16, bold=True, color=CORES['branco'])
+    c.alignment = Alignment(horizontal="center", vertical="center")
+    c.fill = PatternFill(start_color=CORES['primaria'], end_color=CORES['primaria'], fill_type="solid")
+
+    # Helpers de estilo para rótulo (col A) e valor (col B..max_col)
+    def _rotulo(r, texto):
+        ws.row_dimensions[r].height = 22
+        r_cell = ws.cell(row=r, column=1, value=texto)
+        r_cell.font = Font(name='Calibri', size=11, bold=True, color=CORES['primaria'])
+        r_cell.alignment = Alignment(horizontal="left", vertical="center")
+        r_cell.fill = PatternFill(start_color=CORES['neutro_claro'], end_color=CORES['neutro_claro'], fill_type="solid")
+
+    def _valor(r, texto):
+        ws.merge_cells(start_row=r, start_column=2, end_row=r, end_column=max_col)
+        v_cell = ws.cell(row=r, column=2, value=texto)
+        v_cell.font = Font(name='Calibri', size=11)
+        v_cell.alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+
+    # === Linha 2: CONTRATO ===
+    _rotulo(2, "Contrato:")
+    _valor(2, str(contrato) if contrato is not None else "")
+
+    # === Linha 3: PERÍODO ===
+    try:
+        periodo_txt = f"{dt_ini:%d/%m/%Y} a {dt_fim:%d/%m/%Y}"
+    except Exception:
+        periodo_txt = ""
+    _rotulo(3, "Período de Apuração:")
+    _valor(3, periodo_txt)
+
+    # === Linha 4: BOLETINS ===
+    boletins_txt = "-" if (boletins is None or str(boletins).strip() == "") else str(boletins)
+    _rotulo(4, "Boletins Incluídos:")
+    _valor(4, boletins_txt)
+
+    # Linhas 5–6 apenas como espaçamento visual (sem append)
+    ws.row_dimensions[5].height = 6
+    ws.row_dimensions[6].height = 6
+
+def formatar_planilha_profissional(ws, startrow=5):
+    """
+    Aplica formatação profissional à planilha inteira
+    startrow = linha onde começa o cabeçalho da tabela (padrão: 5)
+    """
+    max_row = ws.max_row
+    max_col = ws.max_column
+    
+    # Ajusta largura das colunas
+    for c in range(1, max_col + 1):
+        col_letter = _gcl(c)
+        if c == 1:  # Coluna de identificação (Nome, Data, etc)
+            ws.column_dimensions[col_letter].width = 22
+        else:
+            ws.column_dimensions[col_letter].width = 15
+    
+    # Formata linha de cabeçalho da tabela
+    ws.row_dimensions[startrow].height = 30
+    for c in range(1, max_col + 1):
+        cell = ws.cell(row=startrow, column=c)
+        cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['branco'])
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.fill = PatternFill(start_color=CORES['secundaria'], 
+                                end_color=CORES['secundaria'], 
+                                fill_type="solid")
+        cell.border = criar_borda('medium', CORES['primaria'])
+    
+    # Formata linhas de dados
+    for r in range(startrow + 1, max_row + 1):
+        ws.row_dimensions[r].height = 18
+        
+        # Identifica se é linha de total
+        primeira_celula = str(ws.cell(row=r, column=1).value or "")
+        is_total = _eh_total(primeira_celula)
+        
+        for c in range(1, max_col + 1):
+            cell = ws.cell(row=r, column=c)
+            
+            # Formatação para linha de total
+            if is_total:
+                cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['primaria'])
+                cell.fill = PatternFill(start_color=CORES['neutro_medio'], 
+                                       end_color=CORES['neutro_medio'], 
+                                       fill_type="solid")
+                cell.border = criar_borda('medium', CORES['primaria'])
+                if c == 1:
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+                else:
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+            else:
+                # Formatação para linhas normais
+                # Cor alternada para melhor leitura
+                if (r - startrow) % 2 == 0:
+                    cor_fundo = CORES['branco']
+                else:
+                    cor_fundo = CORES['neutro_claro']
+                
+                cell.fill = PatternFill(start_color=cor_fundo, 
+                                       end_color=cor_fundo, 
+                                       fill_type="solid")
+                cell.border = criar_borda('thin', 'CCCCCC')
+                
+                if c == 1:
+                    cell.font = Font(name='Calibri', size=9)
+                    cell.alignment = Alignment(horizontal="left", vertical="center")
+                else:
+                    cell.font = Font(name='Calibri', size=9)
+                    cell.alignment = Alignment(horizontal="right", vertical="center")
+                    
+                    # Formata números
+                    if isinstance(cell.value, (int, float)):
+                        cell.number_format = '#,##0.00'
+                        
+                        # Destaca negativos em vermelho
+                        if cell.value < 0:
+                            cell.font = Font(name='Calibri', size=9, bold=True, color=CORES['erro'])
+                    # Verifica strings numéricas negativas (formato HH:MM)
+                    elif isinstance(cell.value, str) and cell.value.startswith('-'):
+                        cell.font = Font(name='Calibri', size=9, bold=True, color=CORES['erro'])
+    
+    # Congela painéis no cabeçalho
+    ws.freeze_panes = f"A{startrow + 1}"
+    
+    # Adiciona AutoFiltro
+    if max_row > startrow:  # Só adiciona se houver dados
+        ws.auto_filter.ref = f"A{startrow}:{_gcl(max_col)}{max_row}"
+
+# ============================================================
 # Integração com utils/formatadores (com fallbacks seguros)
 # ============================================================
-try:  # preferir sempre usar os utilitários centrais
+try:
     from utils.formatadores import (
-        aplicar_cabecalho_excel,
-        formatar_planilha_excel,
-        STARTROW_DADOS_XLSX as STARTROW_DADOS,
         eh_negativo_str,
         somar_preservando_formato,
     )
+    STARTROW_DADOS = 5  # Ajustado para novo layout compacto
 except Exception:
-    # ---- fallbacks mínimos para não interromper a exportação ----
-    STARTROW_DADOS = 7
-
-    def aplicar_cabecalho_excel(ws, titulo, contrato, dt_ini, dt_fim, boletins, df_cols):
-        max_col = max(1, len(df_cols))
-        ws.append([titulo])
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=max_col)
-        ws["A1"].font = Font(bold=True, size=14)
-        ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-        ws.append(["Contrato:", str(contrato)])
-        try:
-            periodo = f"{dt_ini:%d/%m/%Y} a {dt_fim:%d/%m/%Y}"
-        except Exception:
-            periodo = ""
-        ws.append(["Período de Apuração:", periodo])
-        ws.append(["Boletins Incluídos:", str(boletins)])
-        ws.append([])
-        ws.append([])  # dados começam na linha 8
-
-    def formatar_planilha_excel(ws, startrow: int = STARTROW_DADOS):
-        for c in range(1, ws.max_column + 1):
-            ws.column_dimensions[_gcl(c)].width = 14
-        ws.freeze_panes = f"A{startrow+1}"
+    STARTROW_DADOS = 5  # Ajustado para novo layout compacto
 
     def eh_negativo_str(val) -> bool:
         if val is None:
@@ -124,20 +263,13 @@ except Exception:
 # Constantes
 # ============================================================
 COLUNAS_PONTO = [
-    "Data",
-    "Nome",
-    "CPF",
-    "PIS",
-    "Total Normais",
-    "Total Noturno",
-    "Extra 50%D",
-    "Extra 100%D",
-    "Extra 50%N",
-    "Extra 100%N",
+    "Data", "Nome", "CPF", "PIS",
+    "Total Normais", "Total Noturno",
+    "Extra 50%D", "Extra 100%D", "Extra 50%N", "Extra 100%N",
 ]
 
 # ============================================================
-# Helpers locais (pequenos e reaproveitáveis)
+# Helpers locais
 # ============================================================
 
 from utils.dataframe_utils import (
@@ -147,14 +279,10 @@ from utils.dataframe_utils import (
     groupby_sum_by_date,
 )
 from utils.comparacao import dfs_sem_ponto
-from utils.constantes import HEADERS_VIZ  # se já importar do app, ajuste
 
 def _montar_tripla_para_export(app, funcionario, data_ini, data_fim):
     """
     Retorna (df_b_f, df_p_f, df_d_f, sem_ponto) prontos para exportação.
-    - df_b_f: Boletim por dia, com cabeçalhos visuais
-    - df_p_f: Ponto por dia, com cabeçalhos visuais (ou limpo se sem ponto)
-    - df_d_f: Diferença por dia com cabeçalhos visuais (zerada se sem ponto)
     """
     # --- Boletim (B) ---
     df_b_base = app.dados_df[
@@ -203,13 +331,11 @@ def _montar_tripla_para_export(app, funcionario, data_ini, data_fim):
 
     return df_b_f, df_p_f, df_d_f, sem_ponto
 
-
 def _get_headers_from_sheet(sheet):
     if sheet is None:
         return None
     h = getattr(sheet, "headers", None)
     return list(h() if callable(h) else h) if h else None
-
 
 def _df_from_sheet_safe(sheet, expected_cols):
     data = [row[:] for row in sheet.get_sheet_data()] if sheet else []
@@ -221,7 +347,6 @@ def _df_from_sheet_safe(sheet, expected_cols):
     if len(cols) < row_len:
         cols += [f"Col{idx}" for idx in range(len(cols) + 1, row_len + 1)]
     return pd.DataFrame(data, columns=cols)
-
 
 def _sheet_name_unique(base, used: set) -> str:
     name = re.sub(r"[][:\\/?*]+", "", str(base)).strip() or "Aba"
@@ -235,13 +360,11 @@ def _sheet_name_unique(base, used: set) -> str:
     used.add(name)
     return name
 
-
 def _ult5_contratos(s):
     if s is None:
         return ""
     itens = [p.strip() for p in str(s).split(",") if p.strip()]
     return ", ".join([(i[-5:] if len(i) >= 5 else i) for i in itens])
-
 
 def _canon_nome(nome: str) -> str:
     if not isinstance(nome, str):
@@ -250,14 +373,21 @@ def _canon_nome(nome: str) -> str:
     nome_norm = " ".join(nome_norm.strip().split())
     return nome_norm.upper()
 
+def _safe_filename(name: str) -> str:
+    name = str(name).strip()
+    name = re.sub(r'[\\/:*?"<>|]+', "_", name)
+    return name[:120] or "Contrato"
+
 # ============================================================
 # Exportações simples (Aba 1 e 2)
 # ============================================================
 
 def exportar_para_excel(app):
+    """Exportação simples com formatação profissional"""
     if app.df_filtrado is None or app.df_filtrado.empty:
         messagebox.showwarning("Aviso", "Não há dados para exportar.")
         return
+    
     arquivo = filedialog.asksaveasfilename(
         defaultextension=".xlsx",
         filetypes=[("Arquivos Excel", "*.xlsx")],
@@ -271,24 +401,63 @@ def exportar_para_excel(app):
     if "DATA" in df.columns:
         df["DATA"] = pd.to_datetime(df["DATA"], errors="coerce").dt.strftime("%d/%m/%Y")
 
+    # Calcula totais
     somas = {}
     for col in getattr(app, "colunas_para_somar", []):
         try:
             somas[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).sum()
         except Exception:
             pass
+    
     if somas:
         total = pd.Series({**{c: "" for c in df.columns}, **somas}, name="TOTAL")
         if "DATA" in total.index:
             total["DATA"] = "TOTAL"
         df = pd.concat([df, total.to_frame().T], ignore_index=True)
 
+    # Cria workbook com formatação
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Relatório"
+    
+    # Escreve cabeçalho
+    for col_idx, col_name in enumerate(df.columns, start=1):
+        ws.cell(row=STARTROW_DADOS, column=col_idx, value=col_name)
+    
+    # Escreve dados
+    for row_idx, (_, row) in enumerate(df.iterrows(), start=STARTROW_DADOS + 1):
+        for col_idx, col_name in enumerate(df.columns, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=row[col_name])
+    
+    # Aplica formatação profissional
+    funcionario = app.combo_funcionario.get()
+    periodo_ini = app.cal_data_inicial.entry.get()
+    periodo_fim = app.cal_data_final.entry.get()
+    
     try:
-        df.to_excel(arquivo, index=False)
+        dt_ini = datetime.strptime(periodo_ini, "%d/%m/%Y")
+        dt_fim = datetime.strptime(periodo_fim, "%d/%m/%Y")
+    except:
+        dt_ini = datetime.now()
+        dt_fim = datetime.now()
+    
+    aplicar_cabecalho_profissional(
+        ws,
+        titulo=f"Relatório de Horas - {funcionario}",
+        contrato="-",
+        dt_ini=dt_ini,
+        dt_fim=dt_fim,
+        boletins="-",
+        df_cols=list(df.columns)
+    )
+    
+    formatar_planilha_profissional(ws, startrow=STARTROW_DADOS)
+    
+    try:
+        wb.save(arquivo)
         messagebox.showinfo("Sucesso", f"Relatório exportado para\n'{arquivo}'")
     except Exception as e:
         messagebox.showerror("Erro de Exportação", str(e))
-
 
 def exportar_para_pdf(app):
     if app.df_filtrado is None or app.df_filtrado.empty:
@@ -402,12 +571,46 @@ def exportar_ponto_para_excel(app, completo: bool = False):
     )
     df_export = pd.concat([df_export, total_row], ignore_index=True)
 
+    # Cria workbook
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Registro de Ponto"
+    
+    # Escreve dados
+    for col_idx, col_name in enumerate(df_export.columns, start=1):
+        ws.cell(row=STARTROW_DADOS, column=col_idx, value=col_name)
+    
+    for row_idx, (_, row) in enumerate(df_export.iterrows(), start=STARTROW_DADOS + 1):
+        for col_idx, col_name in enumerate(df_export.columns, start=1):
+            ws.cell(row=row_idx, column=col_idx, value=row[col_name])
+    
+    # Aplica formatação
     try:
-        df_export.to_excel(arquivo, index=False)
+        dt_ini = dt.datetime.strptime(app.cal_data_inicial.entry.get(), "%d/%m/%Y")
+        dt_fim = dt.datetime.strptime(app.cal_data_final.entry.get(), "%d/%m/%Y")
+    except:
+        dt_ini = dt.datetime.now()
+        dt_fim = dt.datetime.now()
+    
+    titulo = "Registro de Ponto (Completo)" if completo else f"Registro de Ponto - {app.combo_funcionario.get()}"
+    
+    aplicar_cabecalho_profissional(
+        ws,
+        titulo=titulo,
+        contrato="-",
+        dt_ini=dt_ini,
+        dt_fim=dt_fim,
+        boletins="-",
+        df_cols=list(df_export.columns)
+    )
+    
+    formatar_planilha_profissional(ws, startrow=STARTROW_DADOS)
+    
+    try:
+        wb.save(arquivo)
         messagebox.showinfo("Sucesso", f"Relatório exportado para\n'{arquivo}'")
     except Exception as e:
         messagebox.showerror("Erro de Exportação", str(e))
-
 
 def exportar_ponto_para_pdf(app, completo: bool = False):
     df = app.df_ponto if completo else app.df_ponto_filtrado
@@ -526,7 +729,7 @@ def _gerar_dados_comparacao_funcionario(app, funcionario, data_ini_dt, data_fim_
         ("H.E.N.", "Extra 50%N"),
         ("H.E.N.D.", "Extra 100%N"),
     ]
-    colunas_resultado = app.headers_comparacao  # ["Data", ...]
+    colunas_resultado = app.headers_comparacao
 
     bgrp = (df_boletim_filt.groupby(df_boletim_filt["DATA"].dt.date).sum(numeric_only=True)) if not df_boletim_filt.empty else pd.DataFrame()
     pgrp = (df_ponto_filt.groupby(df_ponto_filt["Data"].dt.date).sum(numeric_only=True)) if not df_ponto_filt.empty else pd.DataFrame()
@@ -571,6 +774,7 @@ def _gerar_dados_comparacao_funcionario(app, funcionario, data_ini_dt, data_fim_
 # ============================================================
 
 def exportar_comparacao_individual(app):
+    """Exporta comparação individual com formatação profissional"""
     pasta = filedialog.askdirectory(title="Escolha a pasta para salvar os arquivos")
     if not pasta:
         return
@@ -591,13 +795,8 @@ def exportar_comparacao_individual(app):
     periodo = f"{app.cal_data_inicial.entry.get()} a {app.cal_data_final.entry.get()}"
 
     headers_vis = _get_headers_from_sheet(app.sheet_comp_boletim) or [
-        "Data",
-        "Horas\nNormais",
-        "Horas\nNoturnas",
-        "Extra\n50%D",
-        "Extra\n100%D",
-        "Extra\n50%N",
-        "Extra\n100%N",
+        "Data", "Horas\nNormais", "Horas\nNoturnas", "Extra\n50%D", 
+        "Extra\n100%D", "Extra\n50%N", "Extra\n100%N",
     ]
     headers_horas = headers_vis[1:]
 
@@ -610,120 +809,177 @@ def exportar_comparacao_individual(app):
     df_pto = pd.concat([df_bol["Data"], df_pto_raw.iloc[:min_len].reset_index(drop=True)], axis=1)
     df_dif = pd.concat([df_bol["Data"], df_dif_raw.iloc[:min_len].reset_index(drop=True)], axis=1)
 
-    # remove possíveis linhas "TOTAIS:"
+    # Remove possíveis linhas "TOTAIS:"
     for df in (df_bol, df_pto, df_dif):
         if not df.empty and isinstance(df.iloc[-1, 0], str) and "TOTAIS" in df.iloc[-1, 0].upper():
             df.drop(df.index[-1], inplace=True)
 
-    # ---- XLSX layout tela ----
+    # ---- XLSX layout tela com formatação profissional ----
     caminho_xlsx = f"{pasta}/{nome_file}_comparacao.xlsx"
     wb = Workbook()
     ws = wb.active
     ws.title = "Comparação"
 
-    # Título + metadados simples
-    ws.append([f"Relatório Comparativo — Funcionário: {nome_display}"])
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=1 + (3*len(headers_horas)))
-    ws["A1"].font = Font(bold=True, size=14)
-    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.append([f"Período: {periodo}"])
-    ws.append([])
-    ws.append([])
-
-    ws.append([""] + ["Boletim"] * len(headers_horas) + ["Ponto"] * len(headers_horas) + ["Diferença"] * len(headers_horas))
-    ws.append(["Data"] + headers_horas * 3)
-
+    # Monta DataFrame final
     df_final = pd.DataFrame()
     df_final["Data"] = df_bol["Data"]
     for origem, df_src in (("Boletim", df_bol), ("Ponto", df_pto), ("Diferença", df_dif)):
         for h in headers_horas:
             df_final[f"{origem} {h.replace(chr(10), ' ')}"] = df_src[h]
 
+    # Cabeçalho de grupos (linha 5)
+    ws.append([""] + ["Boletim"] * len(headers_horas) + ["Ponto"] * len(headers_horas) + ["Diferença"] * len(headers_horas))
+    
+    # Cabeçalho de colunas (linha 6)
+    ws.append(["Data"] + headers_horas * 3)
+
+    # Dados
     for _, row in df_final.iterrows():
         ws.append(row.tolist())
 
-    # linha final sem somas
-    ws.append(["TOTAIS:"] + [""] * (len(df_final.columns) - 1))
+    # Linha de totais
+    totais = ["TOTAIS:"] + [somar_preservando_formato(df_final[col]) for col in df_final.columns[1:]]
+    ws.append(totais)
 
-    azul = PatternFill(start_color="B7DFFB", end_color="B7DFFB", fill_type="solid")
-    verde = PatternFill(start_color="C5EDC1", end_color="C5EDC1", fill_type="solid")
-    laranja = PatternFill(start_color="FFDAB9", end_color="FFDAB9", fill_type="solid")
+    # Aplica cabeçalho profissional
+    try:
+        dt_ini = datetime.strptime(app.cal_data_inicial.entry.get(), "%d/%m/%Y")
+        dt_fim = datetime.strptime(app.cal_data_final.entry.get(), "%d/%m/%Y")
+    except:
+        dt_ini = datetime.now()
+        dt_fim = datetime.now()
 
-    for cell in ws[5]:
-        cell.font = Font(bold=True)
+    # Remove as 2 primeiras linhas para adicionar cabeçalho profissional
+    ws.delete_rows(1, 2)
+    
+    # Insere cabeçalho profissional no início
+    ws.insert_rows(1, 6)
+    
+    # Aplica cabeçalho
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(df_final.columns))
+    titulo_cell = ws["A1"]
+    titulo_cell.value = f"Relatório Comparativo – Funcionário: {nome_display}"
+    titulo_cell.font = Font(name='Calibri', size=16, bold=True, color=CORES['branco'])
+    titulo_cell.alignment = Alignment(horizontal="center", vertical="center")
+    titulo_cell.fill = PatternFill(start_color=CORES['primaria'], end_color=CORES['primaria'], fill_type="solid")
+    ws.row_dimensions[1].height = 30
+    
+    # Período
+    ws.row_dimensions[2].height = 22
+    ws.cell(2, 1).value = f"Período: {periodo}"
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(df_final.columns))
+    ws.cell(2, 1).font = Font(name='Calibri', size=11)
+    ws.cell(2, 1).alignment = Alignment(horizontal="center", vertical="center")
+    
+    # Linhas vazias
+    ws.append([])
+    ws.append([])
+
+    # Agora formata a partir da linha 7
+    startrow = 7
+    
+    # Formata linha de grupos (linha 7)
+    ws.row_dimensions[startrow].height = 25
+    for c in range(1, len(df_final.columns) + 1):
+        cell = ws.cell(row=startrow, column=c)
+        cell.font = Font(name='Calibri', size=11, bold=True, color=CORES['branco'])
         cell.alignment = Alignment(horizontal="center", vertical="center")
-    for cell in ws[6]:
-        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color=CORES['primaria'], end_color=CORES['primaria'], fill_type="solid")
+        cell.border = criar_borda('medium', CORES['primaria'])
+    
+    # Mescla células dos grupos
+    ws.merge_cells(start_row=startrow, start_column=2, end_row=startrow, end_column=1+len(headers_horas))
+    ws.merge_cells(start_row=startrow, start_column=2+len(headers_horas), end_row=startrow, end_column=1+2*len(headers_horas))
+    ws.merge_cells(start_row=startrow, start_column=2+2*len(headers_horas), end_row=startrow, end_column=1+3*len(headers_horas))
+    
+    # Formata linha de cabeçalhos (linha 8)
+    startrow += 1
+    ws.row_dimensions[startrow].height = 35
+    for c in range(1, len(df_final.columns) + 1):
+        cell = ws.cell(row=startrow, column=c)
+        cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['branco'])
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
+        cell.fill = PatternFill(start_color=CORES['secundaria'], end_color=CORES['secundaria'], fill_type="solid")
+        cell.border = criar_borda('medium', CORES['primaria'])
+    
+    # Ajusta larguras
     ws.column_dimensions["A"].width = 14
-    width_data = round(12 * 0.8, 1)
-    for c in range(2, 2 + 3 * len(headers_horas)):
-        ws.column_dimensions[_gcl(c)].width = width_data
-
+    for c in range(2, len(df_final.columns) + 1):
+        ws.column_dimensions[_gcl(c)].width = 12
+    
+    # Formata linhas de dados
     max_row = ws.max_row
-    # Tonalizar grupos e marcar negativos
-    # Boletim
-    for c in range(2, 2 + len(headers_horas)):
-        ws.cell(row=5, column=c).fill = azul
-        ws.cell(row=6, column=c).fill = azul
-        for r in range(7, max_row + 1):
-            ws.cell(row=r, column=c).fill = azul
-            ws.cell(row=r, column=c).alignment = Alignment(horizontal="right", vertical="center")
-    # Ponto
-    p_ini, p_fim = 2 + len(headers_horas), 1 + 2 * len(headers_horas)
-    for c in range(p_ini, p_fim + 1):
-        ws.cell(row=5, column=c).fill = verde
-        ws.cell(row=6, column=c).fill = verde
-        for r in range(7, max_row + 1):
-            ws.cell(row=r, column=c).fill = verde
-            ws.cell(row=r, column=c).alignment = Alignment(horizontal="right", vertical="center")
-    # Diferença
-    d_ini, d_fim = p_fim + 1, 1 + 3 * len(headers_horas)
-    for c in range(d_ini, d_fim + 1):
-        ws.cell(row=5, column=c).fill = laranja
-        ws.cell(row=6, column=c).fill = laranja
-        for r in range(7, max_row + 1):
+    b_ini, b_fim = 2, 1 + len(headers_horas)
+    p_ini, p_fim = b_fim + 1, b_fim + len(headers_horas)
+    d_ini, d_fim = p_fim + 1, p_fim + len(headers_horas)
+    
+    for r in range(startrow + 1, max_row + 1):
+        ws.row_dimensions[r].height = 20
+        primeira_celula = str(ws.cell(row=r, column=1).value or "")
+        is_total = _eh_total(primeira_celula)
+        
+        for c in range(1, len(df_final.columns) + 1):
             cell = ws.cell(row=r, column=c)
-            cell.fill = laranja
-            cell.alignment = Alignment(horizontal="right", vertical="center")
-            if eh_negativo_str(cell.value):
-                cell.font = Font(color="FF0000", bold=True)
-
-    ws.freeze_panes = "A7"
+            
+            if is_total:
+                cell.font = Font(name='Calibri', size=11, bold=True, color=CORES['primaria'])
+                cell.fill = PatternFill(start_color=CORES['neutro_medio'], end_color=CORES['neutro_medio'], fill_type="solid")
+                cell.border = criar_borda('medium', CORES['primaria'])
+            else:
+                # Cores por seção
+                if b_ini <= c <= b_fim:
+                    cor_fundo = CORES['boletim']
+                elif p_ini <= c <= p_fim:
+                    cor_fundo = CORES['ponto']
+                elif d_ini <= c <= d_fim:
+                    cor_fundo = CORES['diferenca']
+                else:
+                    cor_fundo = CORES['branco']
+                
+                cell.fill = PatternFill(start_color=cor_fundo, end_color=cor_fundo, fill_type="solid")
+                cell.border = criar_borda('thin', 'CCCCCC')
+                cell.font = Font(name='Calibri', size=10)
+            
+            # Alinhamento
+            if c == 1:
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+            else:
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                
+                # Destaca negativos
+                if eh_negativo_str(cell.value):
+                    cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['erro'])
+    
+    ws.freeze_panes = "A9"
     wb.save(caminho_xlsx)
 
-    # ---- PDF enxuto (layout tela) ----
+    # ---- PDF layout tela ----
     caminho_pdf = f"{pasta}/{nome_file}_comparacao.pdf"
     doc = SimpleDocTemplate(caminho_pdf, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=12)
     styles = getSampleStyleSheet()
 
     header_cells = ["Data"] + headers_horas * 3
-    dados = [header_cells] + df_final.values.tolist() + [["TOTAIS:"] + [""] * (len(header_cells) - 1)]
+    dados = [header_cells] + df_final.values.tolist() + [totais]
 
     col_widths = [1.8 * cm] + [1.36 * cm] * (len(header_cells) - 1)
     tabela = Table(dados, colWidths=col_widths, repeatRows=1)
 
-    estilo = TableStyle(
-        [
-            ("GRID", (0, 0), (-1, -1), 0.3, colors.grey),
-            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#183C5F")),
-            ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-            ("FONTSIZE", (0, 0), (-1, -1), 7),
-        ]
-    )
-    b_ini, b_fim = 1, len(headers_horas)
-    p_ini, p_fim = b_fim + 1, b_fim + len(headers_horas)
-    d_ini, d_fim = p_fim + 1, p_fim + len(headers_horas)
+    estilo = TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.grey),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.whitesmoke),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#183C5F")),
+        ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+    ])
+    
     estilo.add("BACKGROUND", (b_ini, 1), (b_fim, -1), colors.HexColor("#B7DFFB"))
     estilo.add("BACKGROUND", (p_ini, 1), (p_fim, -1), colors.HexColor("#C5EDC1"))
     estilo.add("BACKGROUND", (d_ini, 1), (d_fim, -1), colors.HexColor("#FFDAB9"))
 
-    # negativos em Diferença
+    # Negativos em diferença
     for r in range(1, len(dados)):
         for c in range(d_ini, d_fim + 1):
             if eh_negativo_str(dados[r][c]):
@@ -732,7 +988,7 @@ def exportar_comparacao_individual(app):
 
     tabela.setStyle(estilo)
     story = [
-        Paragraph("<b>Relatório Comparativo — Funcionário Atual</b>", styles["Title"]),
+        Paragraph("<b>Relatório Comparativo – Funcionário Atual</b>", styles["Title"]),
         Paragraph(f"<b>Funcionário:</b> {nome_display}", styles["Normal"]),
         Paragraph(f"<b>Período:</b> {periodo}", styles["Normal"]),
         Spacer(1, 8),
@@ -742,12 +998,8 @@ def exportar_comparacao_individual(app):
 
     messagebox.showinfo("Sucesso", f"Arquivos salvos:\n- {caminho_xlsx}\n- {caminho_pdf}")
 
-
 def exportar_comparacao_unificada(app):
-    """Exporta layout da tela + cria um par XLSX/PDF apenas com as DIFERENÇAS.
-    - Negativos em vermelho e negrito (xlsx + pdf)
-    - Totais preservando o formato (HH:MM ou decimal) via utils/formatadores
-    """
+    """Exporta layout da tela + cria um par XLSX/PDF apenas com as DIFERENÇAS com formatação profissional"""
     nome_display = (app.combo_funcionario.get() or "Funcionario").strip()
     arquivo_base = filedialog.asksaveasfilename(
         defaultextension="",
@@ -762,13 +1014,8 @@ def exportar_comparacao_unificada(app):
     caminho_pdf = arquivo_base + ".pdf"
 
     headers_vis = _get_headers_from_sheet(app.sheet_comp_boletim) or [
-        "Data",
-        "Horas\nNormais",
-        "Horas\nNoturnas",
-        "Extra\n50%D",
-        "Extra\n100%D",
-        "Extra\n50%N",
-        "Extra\n100%N",
+        "Data", "Horas\nNormais", "Horas\nNoturnas", "Extra\n50%D",
+        "Extra\n100%D", "Extra\n50%N", "Extra\n100%N",
     ]
     headers = headers_vis[1:]
 
@@ -785,128 +1032,232 @@ def exportar_comparacao_unificada(app):
         if not df.empty and isinstance(df.iloc[-1, 0], str) and "TOTAIS" in df.iloc[-1, 0].upper():
             df.drop(df.index[-1], inplace=True)
 
-    # monta DF final para o layout tela
+    # Monta DF final
     df_final = pd.DataFrame()
     df_final["Data"] = df_bol["Data"]
     for origem, df_src in (("Boletim", df_bol), ("Ponto", df_pto), ("Diferença", df_dif)):
         for h in headers:
             df_final[f"{origem} {h.replace(chr(10), ' ')}"] = df_src[h]
 
-    totais = [somar_preservando_formato(df_final[col]) for col in df_final.columns[1:]]
+    totais = ["TOTAIS:"] + [somar_preservando_formato(df_final[col]) for col in df_final.columns[1:]]
 
-    # ========= XLSX layout tela =========
-    wb = Workbook(); ws = wb.active; ws.title = "Comparação"
+    # ========= XLSX layout tela com formatação profissional =========
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Comparação"
+    
     periodo = f"{app.cal_data_inicial.entry.get()} a {app.cal_data_final.entry.get()}"
-    ws.append([f"Relatório Comparativo Unificado — Funcionário: {nome_display}"])
-    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=1 + len(df_final.columns) - 1)
-    ws["A1"].font = Font(bold=True, size=14)
-    ws["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws.append([f"Período: {periodo}"])
-    ws.append([]); ws.append([]); ws.append([])
-    ws.append([""] + ["Boletim"] * len(headers) + ["Ponto"] * len(headers) + ["Diferença"] * len(headers))
-    ws.append(["Data"] + headers * 3)
-
-    for _, row in df_final.iterrows():
-        ws.append(row.tolist())
-    ws.append(["TOTAIS:"] + totais)
-
-    azul = PatternFill(start_color="B7DFFB", end_color="B7DFFB", fill_type="solid")
-    verde = PatternFill(start_color="C5EDC1", end_color="C5EDC1", fill_type="solid")
-    laranja = PatternFill(start_color="FFDAB9", end_color="FFDAB9", fill_type="solid")
-
-    for cell in ws[6]:
-        cell.font = Font(bold=True)
+    
+    try:
+        dt_ini = datetime.strptime(app.cal_data_inicial.entry.get(), "%d/%m/%Y")
+        dt_fim = datetime.strptime(app.cal_data_final.entry.get(), "%d/%m/%Y")
+    except:
+        dt_ini = datetime.now()
+        dt_fim = datetime.now()
+    
+    # Aplica cabeçalho profissional
+    aplicar_cabecalho_profissional(
+        ws,
+        titulo=f"Relatório Comparativo Unificado – Funcionário: {nome_display}",
+        contrato="-",
+        dt_ini=dt_ini,
+        dt_fim=dt_fim,
+        boletins="-",
+        df_cols=list(df_final.columns)
+    )
+    
+    # Linha de grupos (linha 7)
+    startrow = STARTROW_DADOS
+    ws.cell(row=startrow, column=1).value = ""
+    for i, grupo in enumerate(["Boletim", "Ponto", "Diferença"], start=1):
+        ws.cell(row=startrow, column=1 + (i-1)*len(headers) + 1).value = grupo
+    
+    # Mescla células dos grupos
+    ws.merge_cells(start_row=startrow, start_column=2, end_row=startrow, end_column=1+len(headers))
+    ws.merge_cells(start_row=startrow, start_column=2+len(headers), end_row=startrow, end_column=1+2*len(headers))
+    ws.merge_cells(start_row=startrow, start_column=2+2*len(headers), end_row=startrow, end_column=1+3*len(headers))
+    
+    # Formata linha de grupos
+    ws.row_dimensions[startrow].height = 25
+    for c in range(1, len(df_final.columns) + 1):
+        cell = ws.cell(row=startrow, column=c)
+        cell.font = Font(name='Calibri', size=11, bold=True, color=CORES['branco'])
         cell.alignment = Alignment(horizontal="center", vertical="center")
-    for cell in ws[7]:
-        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color=CORES['primaria'], end_color=CORES['primaria'], fill_type="solid")
+        cell.border = criar_borda('medium', CORES['primaria'])
+    
+    # Cabeçalhos de colunas (linha 8)
+    startrow += 1
+    ws.cell(row=startrow, column=1).value = "Data"
+    col_idx = 2
+    for _ in range(3):  # Boletim, Ponto, Diferença
+        for h in headers:
+            ws.cell(row=startrow, column=col_idx).value = h
+            col_idx += 1
+    
+    # Formata cabeçalhos
+    ws.row_dimensions[startrow].height = 35
+    for c in range(1, len(df_final.columns) + 1):
+        cell = ws.cell(row=startrow, column=c)
+        cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['branco'])
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-    ws.column_dimensions["A"].width = 14
-    width_data = round(12 * 0.8, 1)
-    for col in range(2, 2 + 3 * len(headers)):
-        ws.column_dimensions[_gcl(col)].width = width_data
-
+        cell.fill = PatternFill(start_color=CORES['secundaria'], end_color=CORES['secundaria'], fill_type="solid")
+        cell.border = criar_borda('medium', CORES['primaria'])
+    
+    # Dados
+    for _, row in df_final.iterrows():
+        startrow += 1
+        for col_idx, val in enumerate(row, start=1):
+            ws.cell(row=startrow, column=col_idx).value = val
+    
+    # Totais
+    startrow += 1
+    for col_idx, val in enumerate(totais, start=1):
+        ws.cell(row=startrow, column=col_idx).value = val
+    
+    # Formata dados e totais
+    b_ini, b_fim = 2, 1 + len(headers)
+    p_ini, p_fim = b_fim + 1, b_fim + len(headers)
+    d_ini, d_fim = p_fim + 1, p_fim + len(headers)
+    
     max_row = ws.max_row
-    # Boletim
-    for c in range(2, 2 + len(headers)):
-        ws.cell(row=6, column=c).fill = azul
-        ws.cell(row=7, column=c).fill = azul
-        for r in range(8, max_row + 1):
-            ws.cell(row=r, column=c).fill = azul
-            ws.cell(row=r, column=c).alignment = Alignment(horizontal="right", vertical="center")
-    # Ponto
-    p_ini, p_fim = 2 + len(headers), 1 + 2 * len(headers)
-    for c in range(p_ini, p_fim + 1):
-        ws.cell(row=6, column=c).fill = verde
-        ws.cell(row=7, column=c).fill = verde
-        for r in range(8, max_row + 1):
-            ws.cell(row=r, column=c).fill = verde
-            ws.cell(row=r, column=c).alignment = Alignment(horizontal="right", vertical="center")
-    # Diferença + negativos
-    d_ini, d_fim = p_fim + 1, 1 + 3 * len(headers)
-    for c in range(d_ini, d_fim + 1):
-        ws.cell(row=6, column=c).fill = laranja
-        ws.cell(row=7, column=c).fill = laranja
-        for r in range(8, max_row + 1):
+    for r in range(STARTROW_DADOS + 2, max_row + 1):
+        ws.row_dimensions[r].height = 20
+        primeira_celula = str(ws.cell(row=r, column=1).value or "")
+        is_total = _eh_total(primeira_celula)
+        
+        for c in range(1, len(df_final.columns) + 1):
             cell = ws.cell(row=r, column=c)
-            cell.fill = laranja
-            cell.alignment = Alignment(horizontal="right", vertical="center")
-            if eh_negativo_str(cell.value):
-                cell.font = Font(color="FF0000", bold=True)
-
-    ws.freeze_panes = "A8"
+            
+            if is_total:
+                cell.font = Font(name='Calibri', size=11, bold=True, color=CORES['primaria'])
+                cell.fill = PatternFill(start_color=CORES['neutro_medio'], end_color=CORES['neutro_medio'], fill_type="solid")
+                cell.border = criar_borda('medium', CORES['primaria'])
+            else:
+                if b_ini <= c <= b_fim:
+                    cor_fundo = CORES['boletim']
+                elif p_ini <= c <= p_fim:
+                    cor_fundo = CORES['ponto']
+                elif d_ini <= c <= d_fim:
+                    cor_fundo = CORES['diferenca']
+                else:
+                    cor_fundo = CORES['branco']
+                
+                cell.fill = PatternFill(start_color=cor_fundo, end_color=cor_fundo, fill_type="solid")
+                cell.border = criar_borda('thin', 'CCCCCC')
+                cell.font = Font(name='Calibri', size=10)
+            
+            if c == 1:
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+            else:
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                if eh_negativo_str(cell.value):
+                    cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['erro'])
+    
+    # Ajusta larguras
+    ws.column_dimensions["A"].width = 14
+    for c in range(2, len(df_final.columns) + 1):
+        ws.column_dimensions[_gcl(c)].width = 12
+    
+    ws.freeze_panes = f"A{STARTROW_DADOS + 2}"
     wb.save(caminho_xlsx)
 
-    # ========= DIFERENÇAS APENAS =========
+    # ========= DIFERENÇAS APENAS com formatação profissional =========
     caminho_xlsx_dif = arquivo_base + "_Diferencas.xlsx"
     caminho_pdf_dif = arquivo_base + "_Diferencas.pdf"
 
-    totais_dif = [somar_preservando_formato(df_dif[h]) for h in headers]
+    totais_dif = ["TOTAIS:"] + [somar_preservando_formato(df_dif[h]) for h in headers]
 
-    wb_d = Workbook(); ws_d = wb_d.active; ws_d.title = "Diferenças"
-    ws_d.append([f"Relatório — Diferenças (Boletim − Ponto) — Funcionário: {nome_display}"])
-    ws_d.merge_cells(start_row=1, start_column=1, end_row=1, end_column=1 + len(headers))
-    ws_d["A1"].font = Font(bold=True, size=14)
-    ws_d["A1"].alignment = Alignment(horizontal="center", vertical="center")
-    ws_d.append([f"Período: {periodo}"])
-    ws_d.append([]); ws_d.append([])
-    ws_d.append([""] + ["Diferença"] * len(headers))
-    ws_d.append(["Data"] + headers)
-    for _, row in df_dif.iterrows():
-        ws_d.append(row.tolist())
-    ws_d.append(["TOTAIS:"] + totais_dif)
-
-    for cell in ws_d[6]:
-        cell.font = Font(bold=True)
+    wb_d = Workbook()
+    ws_d = wb_d.active
+    ws_d.title = "Diferenças"
+    
+    aplicar_cabecalho_profissional(
+        ws_d,
+        titulo=f"Relatório – Diferenças (Boletim − Ponto) – Funcionário: {nome_display}",
+        contrato="-",
+        dt_ini=dt_ini,
+        dt_fim=dt_fim,
+        boletins="-",
+        df_cols=["Data"] + headers
+    )
+    
+    # Linha de grupo (linha 7)
+    ws_d.cell(row=STARTROW_DADOS, column=1).value = ""
+    ws_d.merge_cells(start_row=STARTROW_DADOS, start_column=2, end_row=STARTROW_DADOS, end_column=1+len(headers))
+    ws_d.cell(row=STARTROW_DADOS, column=2).value = "Diferença"
+    
+    ws_d.row_dimensions[STARTROW_DADOS].height = 25
+    for c in range(1, 2 + len(headers)):
+        cell = ws_d.cell(row=STARTROW_DADOS, column=c)
+        cell.font = Font(name='Calibri', size=11, bold=True, color=CORES['branco'])
         cell.alignment = Alignment(horizontal="center", vertical="center")
-    for cell in ws_d[7]:
-        cell.font = Font(bold=True)
+        cell.fill = PatternFill(start_color=CORES['primaria'], end_color=CORES['primaria'], fill_type="solid")
+        cell.border = criar_borda('medium', CORES['primaria'])
+    
+    # Cabeçalhos (linha 8)
+    startrow_d = STARTROW_DADOS + 1
+    ws_d.cell(row=startrow_d, column=1).value = "Data"
+    for col_idx, h in enumerate(headers, start=2):
+        ws_d.cell(row=startrow_d, column=col_idx).value = h
+    
+    ws_d.row_dimensions[startrow_d].height = 35
+    for c in range(1, 2 + len(headers)):
+        cell = ws_d.cell(row=startrow_d, column=c)
+        cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['branco'])
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
-
-    ws_d.column_dimensions["A"].width = 14
-    for col in range(2, 2 + len(headers)):
-        ws_d.column_dimensions[_gcl(col)].width = round(12 * 0.8, 1)
-
-    laranja = PatternFill(start_color="FFDAB9", end_color="FFDAB9", fill_type="solid")
-    max_row = ws_d.max_row
-    for c in range(2, 2 + len(headers)):
-        ws_d.cell(row=6, column=c).fill = laranja
-        ws_d.cell(row=7, column=c).fill = laranja
-        for r in range(8, max_row + 1):
+        cell.fill = PatternFill(start_color=CORES['secundaria'], end_color=CORES['secundaria'], fill_type="solid")
+        cell.border = criar_borda('medium', CORES['primaria'])
+    
+    # Dados
+    for _, row in df_dif.iterrows():
+        startrow_d += 1
+        for col_idx, val in enumerate(row, start=1):
+            ws_d.cell(row=startrow_d, column=col_idx).value = val
+    
+    # Totais
+    startrow_d += 1
+    for col_idx, val in enumerate(totais_dif, start=1):
+        ws_d.cell(row=startrow_d, column=col_idx).value = val
+    
+    # Formata dados
+    max_row_d = ws_d.max_row
+    for r in range(STARTROW_DADOS + 2, max_row_d + 1):
+        ws_d.row_dimensions[r].height = 20
+        primeira_celula = str(ws_d.cell(row=r, column=1).value or "")
+        is_total = _eh_total(primeira_celula)
+        
+        for c in range(1, 2 + len(headers)):
             cell = ws_d.cell(row=r, column=c)
-            cell.fill = laranja
-            cell.alignment = Alignment(horizontal="right", vertical="center")
-            if eh_negativo_str(cell.value):
-                cell.font = Font(color="FF0000", bold=True)
-
-    ws_d.freeze_panes = "A8"
+            
+            if is_total:
+                cell.font = Font(name='Calibri', size=11, bold=True, color=CORES['primaria'])
+                cell.fill = PatternFill(start_color=CORES['neutro_medio'], end_color=CORES['neutro_medio'], fill_type="solid")
+                cell.border = criar_borda('medium', CORES['primaria'])
+            else:
+                cell.fill = PatternFill(start_color=CORES['diferenca'], end_color=CORES['diferenca'], fill_type="solid")
+                cell.border = criar_borda('thin', 'CCCCCC')
+                cell.font = Font(name='Calibri', size=10)
+            
+            if c == 1:
+                cell.alignment = Alignment(horizontal="left", vertical="center")
+            else:
+                cell.alignment = Alignment(horizontal="right", vertical="center")
+                if eh_negativo_str(cell.value):
+                    cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['erro'])
+    
+    ws_d.column_dimensions["A"].width = 14
+    for c in range(2, 2 + len(headers)):
+        ws_d.column_dimensions[_gcl(c)].width = 12
+    
+    ws_d.freeze_panes = f"A{STARTROW_DADOS + 2}"
     wb_d.save(caminho_xlsx_dif)
 
     # PDF diferenças
     doc_d = SimpleDocTemplate(caminho_pdf_dif, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=12)
     styles = getSampleStyleSheet()
     header_cells_d = ["Data"] + headers
-    dados_d = [header_cells_d] + df_dif.values.tolist() + [["TOTAIS:"] + totais_dif]
+    dados_d = [header_cells_d] + df_dif.values.tolist() + [totais_dif]
     tabela_d = Table(dados_d, colWidths=[1.8*cm] + [1.36*cm]*(len(header_cells_d)-1), repeatRows=1)
     estilo_d = TableStyle([
         ("GRID", (0,0), (-1,-1), 0.3, colors.grey),
@@ -918,7 +1269,6 @@ def exportar_comparacao_unificada(app):
         ("ALIGN", (1,1), (-1,-1), "RIGHT"),
         ("FONTSIZE", (0,0), (-1,-1), 7),
     ])
-    # pintar bloco
     estilo_d.add("BACKGROUND", (1,1), (-1,-1), colors.HexColor("#FFDAB9"))
     for r in range(1, len(dados_d)):
         for c in range(1, len(header_cells_d)):
@@ -928,7 +1278,7 @@ def exportar_comparacao_unificada(app):
     tabela_d.setStyle(estilo_d)
 
     story_d = [
-        Paragraph("<b>Relatório — Diferenças (Boletim − Ponto)</b>", styles["Title"]),
+        Paragraph("<b>Relatório – Diferenças (Boletim − Ponto)</b>", styles["Title"]),
         Paragraph(f"<b>Funcionário:</b> {nome_display}", styles["Normal"]),
         Paragraph(f"<b>Período:</b> {periodo}", styles["Normal"]),
         Spacer(1, 8),
@@ -940,7 +1290,7 @@ def exportar_comparacao_unificada(app):
     doc = SimpleDocTemplate(caminho_pdf, pagesize=landscape(A4), rightMargin=20, leftMargin=20, topMargin=20, bottomMargin=12)
     styles = getSampleStyleSheet()
     header_cells = ["Data"] + headers * 3
-    dados = [header_cells] + df_final.values.tolist() + [["TOTAIS:"] + totais]
+    dados = [header_cells] + df_final.values.tolist() + [totais]
     tabela = Table(dados, colWidths=[1.8*cm] + [1.36*cm]*(len(header_cells)-1), repeatRows=1)
     estilo = TableStyle([
         ("GRID", (0,0), (-1,-1), 0.3, colors.grey),
@@ -952,9 +1302,7 @@ def exportar_comparacao_unificada(app):
         ("ALIGN", (1,1), (-1,-1), "RIGHT"),
         ("FONTSIZE", (0,0), (-1,-1), 7),
     ])
-    b_ini, b_fim = 1, len(headers)
-    p_ini, p_fim = b_fim + 1, b_fim + len(headers)
-    d_ini, d_fim = p_fim + 1, p_fim + len(headers)
+    
     estilo.add("BACKGROUND", (b_ini,1), (b_fim,-1), colors.HexColor("#B7DFFB"))
     estilo.add("BACKGROUND", (p_ini,1), (p_fim,-1), colors.HexColor("#C5EDC1"))
     estilo.add("BACKGROUND", (d_ini,1), (d_fim,-1), colors.HexColor("#FFDAB9"))
@@ -982,7 +1330,7 @@ def exportar_comparacao_unificada(app):
     )
 
 # ============================================================
-# Comparação geral e Totais Mensais (mesmas regras visuais)
+# Comparação geral e Totais Mensais
 # ============================================================
 
 def exportar_comparacao_geral(app):
@@ -1009,13 +1357,48 @@ def exportar_comparacao_geral(app):
     except Exception as e:
         messagebox.showerror("Erro", str(e))
 
-
 def exportar_totais_mensais(df_group: pd.DataFrame, nome_base: str, pasta_destino: str):
     try:
         caminho_xlsx = f"{pasta_destino}/{nome_base}.xlsx"
         caminho_pdf = f"{pasta_destino}/{nome_base}.pdf"
-        df_group.to_excel(caminho_xlsx, index=False)
+        
+        # Excel com formatação profissional
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Totais Mensais"
+        
+        # Escreve cabeçalhos
+        for col_idx, col_name in enumerate(df_group.columns, start=1):
+            ws.cell(row=STARTROW_DADOS, column=col_idx, value=col_name)
+        
+        # Escreve dados
+        for row_idx, (_, row) in enumerate(df_group.iterrows(), start=STARTROW_DADOS + 1):
+            for col_idx, col_name in enumerate(df_group.columns, start=1):
+                ws.cell(row=row_idx, column=col_idx, value=row[col_name])
+        
+        # Aplica cabeçalho profissional
+        try:
+            ano_mes = nome_base[-6:]
+            ano = int(ano_mes[:4])
+            mes = int(ano_mes[4:])
+            dt_ref = datetime(ano, mes, 1)
+        except:
+            dt_ref = datetime.now()
+        
+        aplicar_cabecalho_profissional(
+            ws,
+            titulo=f"Totais Mensais por Funcionário - {ano_mes}",
+            contrato="-",
+            dt_ini=dt_ref,
+            dt_fim=dt_ref,
+            boletins="-",
+            df_cols=list(df_group.columns)
+        )
+        
+        formatar_planilha_profissional(ws, startrow=STARTROW_DADOS)
+        wb.save(caminho_xlsx)
 
+        # PDF
         dados = [list(df_group.columns)] + df_group.values.tolist()
         for i in range(1, len(dados)):
             for j in range(3, len(dados[i])):
@@ -1040,7 +1423,7 @@ def exportar_totais_mensais(df_group: pd.DataFrame, nome_base: str, pasta_destin
             ])
         )
         doc.build([
-            Paragraph(f"Totais Mensais por Funcionário - {nome_base[-6:]}", styles["Title"]),
+            Paragraph(f"Totais Mensais por Funcionário - {ano_mes}", styles["Title"]),
             Spacer(1, 12),
             tabela,
         ])
@@ -1049,18 +1432,15 @@ def exportar_totais_mensais(df_group: pd.DataFrame, nome_base: str, pasta_destin
         messagebox.showerror("Erro", f"Falha na exportação de totais mensais:\n{e}")
 
 # ============================================================
-# Consolidação por Contrato (enxuta e com utils)
+# Consolidação por Contrato (com formatação profissional)
 # ============================================================
 
 def exportar_totais_consolidados_excel(app, lista_contratos):
     """
-    Cria um workbook com:
-      • Abas por contrato: funcionários pertencentes ao contrato e seus totais,
-        com cabeçalho padronizado (utils.formatadores) e dados iniciando em
-        STARTROW_DADOS.
-      • Aba "Resumo Geral": Nome | Contrato(últimos 5) | Boletim(lista por nome) | totais…
-      • Um segundo workbook "_Diferencas.xlsx" contendo apenas colunas "Diferença …"
-        com negativos em vermelho e negrito.
+    Cria um workbook com formatação profissional:
+      • Abas por contrato: funcionários pertencentes ao contrato e seus totais
+      • Aba "Resumo Geral": Nome | Contrato | Boletim | totais…
+      • Um segundo workbook "_Diferencas.xlsx" apenas com diferenças
     """
     arquivo_saida = filedialog.asksaveasfilename(
         defaultextension=".xlsx",
@@ -1071,11 +1451,11 @@ def exportar_totais_consolidados_excel(app, lista_contratos):
     if not arquivo_saida:
         return
 
-    # Período a partir da UI
+    # Período da UI
     dt_ini = datetime.strptime(app.cal_data_inicial.entry.get(), "%d/%m/%Y")
     dt_fim = datetime.strptime(app.cal_data_final.entry.get(), "%d/%m/%Y")
 
-    # 1) Calcula uma vez os totais por funcionário (função do App)
+    # Calcula totais por funcionário
     df_boletim_filtrado = app.dados_df[app.dados_df["Contrato"].isin(lista_contratos)]
     todos_funcionarios = sorted(df_boletim_filtrado["Funcionário"].dropna().unique())
 
@@ -1096,24 +1476,52 @@ def exportar_totais_consolidados_excel(app, lista_contratos):
 
     with pd.ExcelWriter(arquivo_saida, engine="openpyxl") as writer:
         used_names = set()
+        
+        # Cria aba por contrato
         for contrato_id in sorted(set(lista_contratos)):
             sheet_name = _sheet_name_unique(contrato_id, used_names)
             df_contrato = df_all[df_all["Contratos"].apply(lambda x: str(contrato_id) in str(x))].copy()
             if df_contrato.empty:
                 continue
 
-            # totalição e limpeza de colunas auxiliares
             df_contrato.drop(columns=["Contratos"], inplace=True, errors="ignore")
-            somas = df_contrato.select_dtypes(include="number").sum()
-            linha_total = pd.Series(somas, name="TOTAIS")
-            linha_total["Funcionário"] = "TOTAIS"
-            df_contrato = pd.concat([df_contrato, linha_total.to_frame().T], ignore_index=True)
+            if "Funcionário" in df_contrato.columns:
+                df_contrato = df_contrato.sort_values("Funcionário", kind="stable").reset_index(drop=True)
+
+            # Linha de totais
+            num_cols = list(df_contrato.select_dtypes(include="number").columns)
+            linha_total = {c: "" for c in df_contrato.columns}
+            for c in num_cols:
+                try:
+                    linha_total[c] = round(float(pd.to_numeric(df_contrato[c], errors="coerce").fillna(0).sum()), 2)
+                except Exception:
+                    linha_total[c] = pd.to_numeric(df_contrato[c], errors="coerce").fillna(0).sum()
+            
+            for c in df_contrato.columns:
+                if c not in num_cols and c not in ("Funcionário", "Registro", "Contrato", "Boletim"):
+                    try:
+                        linha_total[c] = somar_preservando_formato(df_contrato[c])
+                    except Exception:
+                        pass
+            
+            if "Funcionário" in linha_total:
+                linha_total["Funcionário"] = "TOTAIS"
+            
+            df_contrato = pd.concat([df_contrato, pd.DataFrame([linha_total])], ignore_index=True)
+
+            # Arredonda numéricas
+            if num_cols:
+                df_contrato[num_cols] = df_contrato[num_cols].apply(lambda s: s.round(2))
 
             df_contrato.columns = [str(c).replace("_", " ") for c in df_contrato.columns]
+            
+            # Escreve na planilha
             df_contrato.to_excel(writer, sheet_name=sheet_name, index=False, startrow=STARTROW_DADOS)
 
-            # cabeçalho padronizado + boletins listados
+            # Obtém worksheet e aplica formatação profissional
             ws = writer.sheets[sheet_name]
+            
+            # Busca boletins do contrato
             df_b = app.dados_df.copy()
             df_b["DATA"] = pd.to_datetime(df_b["DATA"], errors="coerce")
             mask = (
@@ -1123,11 +1531,16 @@ def exportar_totais_consolidados_excel(app, lista_contratos):
             )
             df_b = df_b.loc[mask]
             if "BOLETIM" in df_b.columns:
-                boletins_txt = ", ".join(map(str, pd.to_numeric(df_b["BOLETIM"], errors="coerce").dropna().astype(int).sort_values().unique().tolist())) or "-"
+                nums = (
+                    pd.to_numeric(df_b["BOLETIM"], errors="coerce")
+                    .dropna().astype(int).sort_values().unique().tolist()
+                )
+                boletins_txt = ", ".join(map(str, nums)) if nums else "-"
             else:
                 boletins_txt = "-"
 
-            aplicar_cabecalho_excel(
+            # Aplica cabeçalho e formatação profissional
+            aplicar_cabecalho_profissional(
                 ws,
                 titulo="Relatório Consolidado de Totais",
                 contrato=contrato_id,
@@ -1136,13 +1549,13 @@ def exportar_totais_consolidados_excel(app, lista_contratos):
                 boletins=boletins_txt,
                 df_cols=list(df_contrato.columns),
             )
-            formatar_planilha_excel(ws, startrow=STARTROW_DADOS)
+            formatar_planilha_profissional(ws, startrow=STARTROW_DADOS)
 
         # ---- Resumo Geral ----
         df_resumo = df_all.copy()
         df_resumo["Contrato"] = df_resumo.get("Contratos", "").apply(_ult5_contratos)
 
-        # Boletins por funcionário (no período + nos contratos selecionados)
+        # Boletins por funcionário
         boletins_por_func = {}
         df_b_all = app.dados_df.copy()
         df_b_all["DATA"] = pd.to_datetime(df_b_all["DATA"], errors="coerce")
@@ -1162,31 +1575,37 @@ def exportar_totais_consolidados_excel(app, lista_contratos):
 
         cols_rest = [c for c in df_resumo.columns if c not in ("Funcionário", "Contratos", "Contrato", "Boletim")]
         df_resumo = df_resumo[["Funcionário", "Contrato", "Boletim"] + cols_rest]
+        if "Funcionário" in df_resumo.columns:
+            df_resumo = df_resumo.sort_values("Funcionário", kind="stable").reset_index(drop=True)
 
-        num_cols = df_resumo.select_dtypes(include="number").columns
-        totais = df_resumo[num_cols].sum(numeric_only=True)
-        linha_total = pd.Series(index=df_resumo.columns, dtype=object)
-        linha_total["Funcionário"] = "TOTAIS GERAIS"
-        for c in num_cols:
-            try:
-                linha_total[c] = round(float(totais.get(c, 0) or 0), 2)
-            except Exception:
-                linha_total[c] = totais.get(c, 0)
-        linha_total["Contrato"] = ""; linha_total["Boletim"] = ""
-        df_resumo = pd.concat([df_resumo, linha_total.to_frame().T], ignore_index=True)
+        # Totais mistos
+        num_cols = list(df_resumo.select_dtypes(include="number").columns)
+        linha_total = {c: "" for c in df_resumo.columns}
+        if num_cols:
+            for c in num_cols:
+                try:
+                    linha_total[c] = round(float(pd.to_numeric(df_resumo[c], errors="coerce").fillna(0).sum()), 2)
+                except Exception:
+                    linha_total[c] = pd.to_numeric(df_resumo[c], errors="coerce").fillna(0).sum()
+        if "Funcionário" in linha_total:
+            linha_total["Funcionário"] = "TOTAIS GERAIS"
+        linha_total["Contrato"] = ""
+        linha_total["Boletim"] = ""
+        df_resumo = pd.concat([df_resumo, pd.DataFrame([linha_total])], ignore_index=True)
 
         df_resumo.columns = [str(c).replace("_", " ") for c in df_resumo.columns]
         df_resumo.to_excel(writer, sheet_name="Resumo Geral", index=False, startrow=STARTROW_DADOS)
 
         ws_resumo = writer.sheets["Resumo Geral"]
-        # Boletins gerais do período
+        
+        # Boletins gerais
         if "BOLETIM" in df_b_all.columns:
             all_nums = pd.to_numeric(df_b_all["BOLETIM"], errors="coerce").dropna().astype(int).sort_values().unique().tolist()
             boletins_all_text = ", ".join(map(str, all_nums)) if all_nums else "-"
         else:
             boletins_all_text = "-"
 
-        aplicar_cabecalho_excel(
+        aplicar_cabecalho_profissional(
             ws_resumo,
             titulo="Resumo Geral - Totais por Funcionário",
             contrato=", ".join(map(str, lista_contratos)),
@@ -1195,7 +1614,7 @@ def exportar_totais_consolidados_excel(app, lista_contratos):
             boletins=boletins_all_text,
             df_cols=list(df_resumo.columns),
         )
-        formatar_planilha_excel(ws_resumo, startrow=STARTROW_DADOS)
+        formatar_planilha_profissional(ws_resumo, startrow=STARTROW_DADOS)
 
     # ================= Workbook apenas de DIFERENÇAS =================
     diff_cols_raw = [c for c in df_all.columns if str(c).startswith("Diferença ")]
@@ -1211,31 +1630,32 @@ def exportar_totais_consolidados_excel(app, lista_contratos):
                 df_dif = df_contrato[["Funcionário"] + diff_cols_raw].copy()
                 df_dif.columns = [str(c).replace("_", " ") for c in df_dif.columns]
                 somas = df_dif.select_dtypes(include="number").sum()
-                linha_total = pd.Series(somas, name="TOTAIS"); linha_total["Funcionário"] = "TOTAIS"
+                linha_total = pd.Series(somas, name="TOTAIS")
+                linha_total["Funcionário"] = "TOTAIS"
                 df_dif = pd.concat([df_dif, linha_total.to_frame().T], ignore_index=True)
 
                 df_dif.to_excel(writer, sheet_name=sheet_name, index=False, startrow=STARTROW_DADOS)
                 ws = writer.sheets[sheet_name]
 
-                # cabeçalho padrão
-                aplicar_cabecalho_excel(
+                # Aplica cabeçalho e formatação profissional
+                aplicar_cabecalho_profissional(
                     ws,
-                    titulo="Relatório — DIFERENÇAS (Boletim − Ponto)",
+                    titulo="Relatório – DIFERENÇAS (Boletim − Ponto)",
                     contrato=contrato_id,
                     dt_ini=dt_ini,
                     dt_fim=dt_fim,
                     boletins="-",
                     df_cols=list(df_dif.columns),
                 )
-                formatar_planilha_excel(ws, startrow=STARTROW_DADOS)
+                formatar_planilha_profissional(ws, startrow=STARTROW_DADOS)
 
-                # negativos em vermelho + negrito (todas as colunas de diferença)
+                # Destaca negativos em vermelho
                 max_row, max_col = ws.max_row, ws.max_column
                 for r in range(STARTROW_DADOS + 1, max_row + 1):
-                    for c in range(2, max_col + 1):  # pula col A (Funcionário)
+                    for c in range(2, max_col + 1):
                         cell = ws.cell(row=r, column=c)
                         if eh_negativo_str(cell.value):
-                            cell.font = Font(color="FF0000", bold=True)
+                            cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['erro'])
 
             # Resumo Geral (diferenças)
             df_res = df_all.copy()
@@ -1247,7 +1667,8 @@ def exportar_totais_consolidados_excel(app, lista_contratos):
             num_cols = df_res.select_dtypes(include="number").columns
             tot = df_res[num_cols].sum(numeric_only=True)
             linha_total = pd.Series(index=df_res.columns, dtype=object)
-            linha_total["Funcionário"] = "TOTAIS GERAIS"; linha_total["Contrato"] = ""
+            linha_total["Funcionário"] = "TOTAIS GERAIS"
+            linha_total["Contrato"] = ""
             for c in num_cols:
                 try:
                     linha_total[c] = round(float(tot.get(c, 0) or 0), 2)
@@ -1257,56 +1678,39 @@ def exportar_totais_consolidados_excel(app, lista_contratos):
 
             df_res.to_excel(writer, sheet_name="Resumo Geral", index=False, startrow=STARTROW_DADOS)
             ws = writer.sheets["Resumo Geral"]
-            aplicar_cabecalho_excel(
+            
+            aplicar_cabecalho_profissional(
                 ws,
-                titulo="Resumo Geral — DIFERENÇAS (Boletim − Ponto)",
+                titulo="Resumo Geral – DIFERENÇAS (Boletim − Ponto)",
                 contrato=", ".join(map(str, lista_contratos)),
                 dt_ini=dt_ini,
                 dt_fim=dt_fim,
                 boletins="-",
                 df_cols=list(df_res.columns),
             )
-            formatar_planilha_excel(ws, startrow=STARTROW_DADOS)
+            formatar_planilha_profissional(ws, startrow=STARTROW_DADOS)
 
+            # Destaca negativos
             max_row, max_col = ws.max_row, ws.max_column
             for r in range(STARTROW_DADOS + 1, max_row + 1):
-                for c in range(3, max_col + 1):  # pula Nome e Contrato
+                for c in range(3, max_col + 1):
                     cell = ws.cell(row=r, column=c)
                     if eh_negativo_str(cell.value):
-                        cell.font = Font(color="FF0000", bold=True)
+                        cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['erro'])
 
     messagebox.showinfo("Sucesso", f"Relatório de totais consolidados salvo em:\n{arquivo_saida}")
 
-
-def _safe_filename(name: str) -> str:
-    name = str(name).strip()
-    name = re.sub(r'[\\/:*?"<>|]+', "_", name)
-    return name[:120] or "Contrato"
-
 def exportar_totais_consolidados_por_contrato_em_arquivos(app, lista_contratos):
     """
-    Gera UM PAR de arquivos por contrato:
+    Gera UM PAR de arquivos por contrato com formatação profissional:
     • Totais_Consolidados_<contrato>.xlsx
     • Totais_Consolidados_<contrato>_Diferencas.xlsx
-    Cada arquivo tem uma única aba com os mesmos dados/estilo dos consolidados atuais.
     """
-    try:
-        from utils.formatadores import (
-            aplicar_cabecalho_excel,
-            formatar_planilha_excel,
-            STARTROW_DADOS_XLSX as STARTROW_DADOS,
-            eh_negativo_str,
-        )
-    except Exception as e:
-        messagebox.showerror("Erro", f"Falha ao importar utils/formatadores:\n{e}")
-        return
-
-    # pasta de saída
     pasta = filedialog.askdirectory(title="Escolha a pasta para salvar os arquivos por contrato")
     if not pasta:
         return
 
-    # período da UI
+    # Período da UI
     try:
         dt_ini = datetime.strptime(app.cal_data_inicial.entry.get(), "%d/%m/%Y")
         dt_fim = datetime.strptime(app.cal_data_final.entry.get(), "%d/%m/%Y")
@@ -1314,7 +1718,7 @@ def exportar_totais_consolidados_por_contrato_em_arquivos(app, lista_contratos):
         messagebox.showerror("Erro", "Período inválido na interface.")
         return
 
-    # === prepara base de totais por funcionário (mesma lógica do consolidado atual) ===
+    # Prepara base de totais por funcionário
     df_boletim_sel = app.dados_df[app.dados_df["Contrato"].isin(lista_contratos)].copy()
     funcionarios = sorted(df_boletim_sel["Funcionário"].dropna().unique())
 
@@ -1332,16 +1736,16 @@ def exportar_totais_consolidados_por_contrato_em_arquivos(app, lista_contratos):
         return
 
     df_all = pd.DataFrame(resultados)
-
     gerados = []
 
-    # ===== loop por contrato → 2 arquivos =====
+    # Loop por contrato → 2 arquivos
     for contrato_id in sorted(set(lista_contratos)):
-        # ---- Totais (semelhante à aba por contrato do consolidado) ----
+        # ---- Totais ----
         df_contrato = df_all[df_all["Contratos"].apply(lambda x: str(contrato_id) in str(x))].copy()
         if not df_contrato.empty:
             df_contrato.drop(columns=["Contratos"], inplace=True, errors="ignore")
-            # linha TOTAIS
+            
+            # Linha TOTAIS
             somas = df_contrato.select_dtypes(include="number").sum()
             linha_total = pd.Series(somas, name="TOTAIS")
             linha_total["Funcionário"] = "TOTAIS"
@@ -1349,17 +1753,19 @@ def exportar_totais_consolidados_por_contrato_em_arquivos(app, lista_contratos):
 
             df_contrato.columns = [str(c).replace("_", " ") for c in df_contrato.columns]
 
-            # cria workbook e escreve
-            wb = Workbook(); ws = wb.active; ws.title = str(contrato_id)
+            # Cria workbook e escreve
+            wb = Workbook()
+            ws = wb.active
+            ws.title = str(contrato_id)
 
-            # escrevendo a partir de STARTROW_DADOS
+            # Escrevendo a partir de STARTROW_DADOS
             for j, col in enumerate(df_contrato.columns, start=1):
                 ws.cell(row=STARTROW_DADOS, column=j, value=col)
             for i, (_, row) in enumerate(df_contrato.iterrows(), start=STARTROW_DADOS + 1):
                 for j, col in enumerate(df_contrato.columns, start=1):
                     ws.cell(row=i, column=j, value=row[col])
 
-            # boletins do contrato no período
+            # Boletins do contrato no período
             df_b = app.dados_df.copy()
             df_b["DATA"] = pd.to_datetime(df_b["DATA"], errors="coerce")
             mask = (df_b["Contrato"] == contrato_id) & (df_b["DATA"].dt.date.between(dt_ini.date(), dt_fim.date()))
@@ -1371,7 +1777,7 @@ def exportar_totais_consolidados_por_contrato_em_arquivos(app, lista_contratos):
             else:
                 boletins_txt = "-"
 
-            aplicar_cabecalho_excel(
+            aplicar_cabecalho_profissional(
                 ws,
                 titulo="Relatório Consolidado de Totais",
                 contrato=contrato_id,
@@ -1380,50 +1786,56 @@ def exportar_totais_consolidados_por_contrato_em_arquivos(app, lista_contratos):
                 boletins=boletins_txt,
                 df_cols=list(df_contrato.columns),
             )
-            formatar_planilha_excel(ws, startrow=STARTROW_DADOS)
+            formatar_planilha_profissional(ws, startrow=STARTROW_DADOS)
 
-            # salvar
+            # Salvar
             nome_tot = _safe_filename(f"Totais_Consolidados_{contrato_id}.xlsx")
             caminho_tot = f"{pasta}/{nome_tot}"
             wb.save(caminho_tot)
             gerados.append(caminho_tot)
 
-        # ---- Diferenças (semelhante ao arquivo _Diferencas.xlsx) ----
+        # ---- Diferenças ----
         diff_cols = [c for c in df_all.columns if str(c).startswith("Diferença ")]
         if diff_cols:
             df_dif = df_all[df_all["Contratos"].apply(lambda x: str(contrato_id) in str(x))].copy()
             if not df_dif.empty:
                 df_dif = df_dif[["Funcionário"] + diff_cols].copy()
                 df_dif.columns = [str(c).replace("_", " ") for c in df_dif.columns]
-                # linha TOTAIS
+                
+                # Linha TOTAIS
                 somas = df_dif.select_dtypes(include="number").sum()
-                linha_total = pd.Series(somas, name="TOTAIS"); linha_total["Funcionário"] = "TOTAIS"
+                linha_total = pd.Series(somas, name="TOTAIS")
+                linha_total["Funcionário"] = "TOTAIS"
                 df_dif = pd.concat([df_dif, linha_total.to_frame().T], ignore_index=True)
 
-                wb_d = Workbook(); ws_d = wb_d.active; ws_d.title = str(contrato_id)
+                wb_d = Workbook()
+                ws_d = wb_d.active
+                ws_d.title = str(contrato_id)
+                
                 for j, col in enumerate(df_dif.columns, start=1):
                     ws_d.cell(row=STARTROW_DADOS, column=j, value=col)
                 for i, (_, row) in enumerate(df_dif.iterrows(), start=STARTROW_DADOS + 1):
                     for j, col in enumerate(df_dif.columns, start=1):
                         ws_d.cell(row=i, column=j, value=row[col])
 
-                aplicar_cabecalho_excel(
+                aplicar_cabecalho_profissional(
                     ws_d,
-                    titulo="Relatório — DIFERENÇAS (Boletim − Ponto)",
+                    titulo="Relatório – DIFERENÇAS (Boletim − Ponto)",
                     contrato=contrato_id,
                     dt_ini=dt_ini,
                     dt_fim=dt_fim,
                     boletins="-",
                     df_cols=list(df_dif.columns),
                 )
-                formatar_planilha_excel(ws_d, startrow=STARTROW_DADOS)
+                formatar_planilha_profissional(ws_d, startrow=STARTROW_DADOS)
 
-                # negativos em vermelho + negrito (todas as colunas de diferença)
+                # Negativos em vermelho + negrito
                 max_row, max_col = ws_d.max_row, ws_d.max_column
                 for r in range(STARTROW_DADOS + 1, max_row + 1):
-                    for c in range(2, max_col + 1):  # pula col A (Funcionário)
-                        if eh_negativo_str(ws_d.cell(row=r, column=c).value):
-                            ws_d.cell(row=r, column=c).font = Font(color="FF0000", bold=True)
+                    for c in range(2, max_col + 1):
+                        cell = ws_d.cell(row=r, column=c)
+                        if eh_negativo_str(cell.value):
+                            cell.font = Font(name='Calibri', size=10, bold=True, color=CORES['erro'])
 
                 nome_dif = _safe_filename(f"Totais_Consolidados_{contrato_id}_Diferencas.xlsx")
                 caminho_dif = f"{pasta}/{nome_dif}"
